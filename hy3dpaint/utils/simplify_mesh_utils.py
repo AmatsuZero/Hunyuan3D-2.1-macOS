@@ -27,21 +27,9 @@ def mesh_simplify_trimesh(inputpath, outputpath, target_count=40000):
         ms.load_new_mesh(inputpath, load_in_a_single_layer=True)
     else:
         ms.load_new_mesh(inputpath)
+    # Use the existing PyMeshLab mesh to avoid trimesh's optional Open3D backend.
+    if ms.current_mesh().face_number() > target_count:
+        ms.meshing_decimation_quadric_edge_collapse(targetfacenum=int(target_count))
     ms.save_current_mesh(outputpath.replace(".glb", ".obj"), save_textures=False)
-    # 调用减面函数
     courent = trimesh.load(outputpath.replace(".glb", ".obj"), force="mesh")
-    face_num = courent.faces.shape[0]
-
-    if face_num > target_count:
-        # Newer trimesh/fast_simplification uses target_reduction (0-1 ratio)
-        # instead of absolute face count
-        try:
-            courent = courent.simplify_quadric_decimation(target_count)
-        except (ValueError, TypeError):
-            ratio = 1.0 - (target_count / face_num)
-            import fast_simplification
-            vertices, faces = fast_simplification.simplify(
-                courent.vertices, courent.faces, target_reduction=ratio
-            )
-            courent = trimesh.Trimesh(vertices=vertices, faces=faces)
     courent.export(outputpath)
