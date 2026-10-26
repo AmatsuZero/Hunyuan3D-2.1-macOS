@@ -1,0 +1,33 @@
+# macOS Apple Silicon Shape-only baseline.
+# This intentionally excludes CUDA-only and training-only dependencies from
+# upstream requirements.txt: cupy-cuda12x, deepspeed, and the CUDA rasterizer.
+--extra-index-url https://mirrors.cloud.tencent.com/pypi/simple/
+--extra-index-url https://mirrors.aliyun.com/pypi/simple
+
+ninja==1.11.1.1
+pybind11==2.13.4
+transformers==4.46.0
+diffusers==0.30.0
+accelerate==1.1.1
+huggingface-hub==0.30.2
+safetensors==0.4.4
+numpy==1.24.4
+scipy==1.14.1
+einops==0.8.0
+opencv-python==4.10.0.84
+imageio==2.36.0
+scikit-image==0.24.0
+rembg==2.0.65
+trimesh==4.4.7
+# pymeshlab==2022.2.post3  # no Apple Silicon wheel; postprocessing fallback pending
+pygltflib==1.16.3
+# xatlas==0.0.9  # source build requires unavailable CMake on this baseline host; not imported by Shape inference
+# open3d==0.18.0  # no compatible wheel pinned by upstream
+# omegaconf==2.3.0  # training/config CLI dependency; not imported by pipeline inference
+pyyaml==6.0.2
+tqdm==4.66.5
+psutil==6.0.0
+onnxruntime==1.16.3
+torchmetrics==1.6.0
+timm
+torchdiffeq
