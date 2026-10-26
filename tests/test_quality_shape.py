@@ -33,3 +33,12 @@ class QualityShapeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+from run_shape_quality import build_parser
+
+
+class ArgumentTests(unittest.TestCase):
+    def test_child_argument_is_optional_and_integer(self):
+        parser = build_parser()
+        self.assertIsNone(parser.parse_args([]).child)
+        self.assertEqual(parser.parse_args(["--child", "192"]).child, 192)
