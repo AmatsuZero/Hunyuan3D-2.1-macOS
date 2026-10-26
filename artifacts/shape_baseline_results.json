@@ -1,0 +1,33 @@
+{
+  "code_commit": "82920d643c0dc2f7bfd7255f45f62d386edfe60c",
+  "model_source": "ModelScope AI-ModelScope/Hunyuan3D-2.1",
+  "model_revision": "downloaded from ModelScope master; Hugging Face target revision 0b94677654c57bb9a6b6845cd7b704ccf551d327 was unavailable through the configured proxy",
+  "model_directory": "/Users/daubert/Github/hunyuan3d-artifacts/Hunyuan3D-2.1-modelscope",
+  "shape_dit_bytes": 7366389768,
+  "shape_vae_bytes": 655648152,
+  "input": "/Users/daubert/Github/Hunyuan3D-2.1/assets/demo.png",
+  "dtype": "float32",
+  "sampling_steps": 10,
+  "octree_resolution": 64,
+  "cpu": {
+    "load_seconds": 12.419582542032003,
+    "inference_seconds": 313.1251102075912,
+    "vertices": 10316,
+    "faces": 20632,
+    "finite": true,
+    "glb": "artifacts/shape_cpu_demo.glb",
+    "glb_bytes": 372184,
+    "blender_import": true
+  },
+  "mps": {
+    "load_seconds": 22.563383165746927,
+    "inference_seconds": 266.131542917341,
+    "vertices": 9242,
+    "faces": 18484,
+    "finite": true,
+    "glb": "artifacts/shape_mps_demo.glb",
+    "glb_bytes": 333520,
+    "blender_import": true,
+    "compatibility_fix": "torchvision Resize antialias=False; antialias=True used unsupported aten::_upsample_bilinear2d_aa.out on MPS"
+  }
+}
