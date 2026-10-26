@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Hunyuan 3D is licensed under the TENCENT HUNYUAN NON-COMMERCIAL LICENSE AGREEMENT
 # except for the third-party components listed below.
 # Hunyuan 3D does not impose any additional limitations beyond what is outlined
@@ -17,7 +19,10 @@ import tempfile
 from typing import Union
 
 import numpy as np
-import pymeshlab
+try:
+    import pymeshlab
+except ImportError:  # Optional for Shape inference/export on Apple Silicon.
+    pymeshlab = None
 import torch
 import trimesh
 
@@ -25,10 +30,16 @@ from .models.autoencoders import Latent2MeshOutput
 from .utils import synchronize_timer
 
 
+def _require_pymeshlab():
+    if pymeshlab is None:
+        raise ImportError("pymeshlab is required only for optional mesh postprocessing")
+
+
 def load_mesh(path):
     if path.endswith(".glb"):
         mesh = trimesh.load(path)
     else:
+        _require_pymeshlab()
         mesh = pymeshlab.MeshSet()
         mesh.load_new_mesh(path)
     return mesh
@@ -60,6 +71,7 @@ def remove_floater(mesh: pymeshlab.MeshSet):
 
 
 def pymeshlab2trimesh(mesh: pymeshlab.MeshSet):
+    _require_pymeshlab()
     with tempfile.NamedTemporaryFile(suffix='.ply', delete=False) as temp_file:
         mesh.save_current_mesh(temp_file.name)
         mesh = trimesh.load(temp_file.name)
@@ -74,6 +86,7 @@ def pymeshlab2trimesh(mesh: pymeshlab.MeshSet):
 
 
 def trimesh2pymeshlab(mesh: trimesh.Trimesh):
+    _require_pymeshlab()
     with tempfile.NamedTemporaryFile(suffix='.ply', delete=False) as temp_file:
         if isinstance(mesh, trimesh.scene.Scene):
             for idx, obj in enumerate(mesh.geometry.values()):
@@ -105,6 +118,7 @@ def import_mesh(mesh: Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutpu
     if isinstance(mesh, str):
         mesh = load_mesh(mesh)
     elif isinstance(mesh, Latent2MeshOutput):
+        _require_pymeshlab()
         mesh = pymeshlab.MeshSet()
         mesh_pymeshlab = pymeshlab.Mesh(vertex_matrix=mesh.mesh_v, face_matrix=mesh.mesh_f)
         mesh.add_mesh(mesh_pymeshlab, "converted_mesh")
