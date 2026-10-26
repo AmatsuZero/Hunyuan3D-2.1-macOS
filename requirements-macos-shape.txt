@@ -23,6 +23,7 @@ trimesh==4.4.7
 pygltflib==1.16.3
 # xatlas==0.0.9  # source build requires unavailable CMake on this baseline host; not imported by Shape inference
 # open3d==0.18.0  # no compatible wheel pinned by upstream
+# OmegaConf is needed by the package import path.
 omegaconf==2.3.0
 antlr4-python3-runtime==4.9.3
 pyyaml==6.0.2
