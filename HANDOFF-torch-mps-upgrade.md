@@ -6,7 +6,7 @@
 
 - 当前阶段是 **隔离验证 Torch 2.5.1 → 2.14.1**，随后按 roadmap 逐步迁移 MLX。尚未切换默认环境，也没有开始全面 MLX 迁移。
 - 新版已完成关闭自动 fallback 的完整上色；所审计神经网络的参数、计算输入/输出均在 MPS，MLX 部分在 Metal。不能据此宣称全流水线都在 GPU：显式 CPU 路径和完整 GPU trace 验收仍未完成。
-- 颜色诊断已闭环到固定条件复验：旧版（Torch 2.5.1）全黑 HY3D 来自 MPS bicubic/DINO 错误；候选版早期 hybrid 的 H/Y/D 染红来自 MLX reference attention 材质 V head layout。两处根因均已定位，后者修复后固定条件 15 步 hybrid 恢复黑 H/Y/D、红 3。完整 GLB 和真实 3D 查看仍未验收。
+- 颜色诊断已闭环到固定条件及本地完整 GLB 复验：旧版（Torch 2.5.1）全黑 HY3D 来自 MPS bicubic/DINO 错误；候选版早期 hybrid 的 H/Y/D 染红来自 MLX reference attention 材质 V head layout。两处根因均已定位，后者修复后固定条件 15 步 hybrid 及完整 GLB 的 Blender 四视图恢复黑 H/Y/D、红 3。用户设备/独立 3D 查看仍未验收。
 - 相同 seed 在两个 Torch 版本下产生不同实际噪声，旧的同 seed 对比不充分。把旧版实际初始噪声注入修复前候选 hybrid 后 H/Y/D 仍红——**初始噪声不是染红根因（负结果保留）**；后续纯 Torch/hybrid 固定条件对照才把分叉定位到 MLX reference attention。
 - 当前没有本任务遗留的运行中推理/trace 进程。ComfyUI 是用户的既有进程，下一次 GPU 实验前重新检查队列。
 - **重要结论反转**：Torch 升级本身不是候选版颜色失败的原因，反而**修复**了一个真实的 2.5.1 MPS bug（见 §6.2）。`demo.png` 的设计意图已确认是黑 H/Y/D、红 3；候选版染红来自 MLX inner UNet 的 reference attention 材质 V head layout 差异，已在固定条件下修复并复验（见 §6.4）。
@@ -28,9 +28,11 @@
 1. `d8a7abd`：记录已验证的现有运行前提（原生扩展 Torch rpath、SDPA workspace 上限、MLX 本地权重查找）。
 2. `3e6bb2f`：隔离升级方案、MLX roadmap、实验依赖锁、MPS 执行审计、算子探针、验证报告。
 3. `026c1be`：初始噪声 replay/capture、3 个测试、VAE 与 run 07 诊断结果。
-4. 本交接文件应独立提交；提交时一并纳入本轮新增的未跟踪诊断脚本：`tools/quality_demo/probe_fixed_conditions.py`、`probe_dino_parity.py`、`probe_dino_ops.py`、`probe_dino_embeddings.py`、`probe_bicubic_pos.py`（`git status --short` 可见，均属诊断专用、不写已交付资产）。**不要**触碰根目录 `torchvision_fix.py` 这个继承来的 dirty 文件（受保护）。使用 `git log -4 --oneline` 查看提交 SHA。
+4. `d2f89a0`：交接与固定条件颜色诊断工具。
+5. `92bc4e0`：修复 MLX reference attention 材质 V head layout。
+6. `0b0e285`、`83e84de`：记录修复后固定条件与完整 GLB 本地验证。**不要**触碰根目录 `torchvision_fix.py` 这个继承来的 dirty 文件（受保护）。使用 `git log -6 --oneline` 查看后续提交 SHA。
 
-推送目标是 `fork/codex/torch-mps-upgrade`，remote `fork` 为 `https://github.com/AmatsuZero/Hunyuan3D-2.1-macOS.git`。`origin` 是上游，不要向它推送。交接收尾会推送以上提交并核对远端 SHA；以实际 `git ls-remote` 为准。没有创建 PR，也没有合并。
+推送目标是 `fork/codex/torch-mps-upgrade`，remote `fork` 为 `https://github.com/AmatsuZero/Hunyuan3D-2.1-macOS.git`。`origin` 是上游，不要向它推送。上述提交已推送到 fork；后续以实际 `git ls-remote` 为准。没有创建 PR，也没有合并。
 
 隔离 worktree 是手动 sparse linked worktree，排除了 `hy3dshape/tools/mini_trainset/`。原生 managed-worktree 创建曾因 partial-clone 缺少训练 blobs 失败，不必重建整个工作区。
 
@@ -79,9 +81,9 @@
 | run 07 实际噪声 | `initial-latents.npy` 与旧 fixture 逐元素完全一致；UniPC initial sigma=1.0 |
 | MPS bounded ops | 新版 16/16；旧版 12/16，4 个 bicubic fp32/fp16 ±antialias 不支持 MPS（fallback 关闭） |
 | 测试 | 最新 25/25 unittest；py_compile、git diff --check 通过 |
-| GLB 结构 | run 06/07 都是 24087 UV-split 顶点、40000 面、1 PBR material、2 张内嵌 2048×2048 可解码贴图，几何/UV 有限 |
+| GLB 结构与本地查看 | run 06/07/08 均为 24,087 个 UV-split 顶点、40,000 面、1 个 PBR 材质、2 张内嵌 2048×2048 可解码贴图，几何/UV 有限。修复后 run 08 的 Blender CPU 四视图核对了正面颜色及侧背面贴图连续性；用户设备/独立查看待验收。 |
 | 颜色（旧版 2.5.1） | FAIL 但根因已定位：2.5.1 MPS 缺 `upsample_bicubic2d` 内核，DINOv2 位置编码 37×37→16×16 bicubic 插值结果错误（cos vs CPU = −0.0014、nrmse 1.32），使 DINO 隐状态语义崩坏（final cos 0.29）。旧版全黑 HY3D 正是此错误的后果。 |
-| 颜色（候选版 2.14.1） | 固定条件通过：`demo.png` 是黑 H/Y/D、红 3；修复后的完整 15 步 hybrid 输出保持该设计。该结论不覆盖完整 GLB、默认环境或真实 3D 查看。 |
+| 颜色（候选版 2.14.1） | 固定条件及完整 GLB 本地查看通过：`demo.png` 是黑 H/Y/D、红 3；修复后的 15 步 hybrid 输出与 Blender 四视图保持该设计。该结论不覆盖默认环境或用户设备/独立 3D 查看。 |
 | 修复前因果链 | 旧版 corrupted DINO 注入证明 DINO 差异进入 UNet；修复前固定条件对照中纯 Torch 15 步正确、MLX hybrid 染红：`noise_pred_0` 完全相同，`noise_pred_1` nrmse 0.1088，最终 `latents_14` nrmse 0.4171。 |
 | 修复前 MLX parity | `capture-hybrid-compare-step2`：第一个 MLX step 的 Torch/MLX mean abs 0.047266、p99 0.398438、max 4.521484；`HUNYUAN_MLX_FP32=1` 仅降至 mean abs 0.046533，排除简单 fp16 累积。 |
 | DINO 跨版本 CPU 对照 | CPU 上 2.5.1 vs 2.14.1 的 DINO final 几乎一致（nrmse 0.0015），排除权重/输入差异；差异纯由 2.5.1 的 MPS 路径引起。 |
@@ -156,7 +158,7 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 - 修复后完整严格 GLB audit 目录：`/Users/daubert/Github/hy3d-upgrade-evidence/20261027/candidate-audit-08-ref-layout-fixed/`。`audit.json` exit 0，fallback=0，15 次生成（1 次 Torch + 14 次 MLX），inference `189.718 s`，总耗时 `214.979 s`，MLX peak `8.942 GiB`，source SHA 校验均为 `matches_model_source=true`。`textured.glb` 为 3,500,288 bytes，SHA256 `a4fe11daf92e584d434e524bd8fb406cd17dcee83fbf8fc5a87b50edfc5aa1cf`；结构为 24,087 顶点、40,000 面、1 个 PBR 材质、2048×2048 base-color，几何/UV 有限。
 - 该 GLB 的 Blender 5.2.3 CPU 四视图（`glb-view-0/90/180/270.png`）显示正面黑 H/Y/D、红 3，侧面与背面贴图连续，没有翻转或丢失。这个本地查看结果不替代用户设备或独立 3D 查看验收。
 
-**当前结论**：候选版染红的第一可复现分叉是 MLX reference attention 的材质 V head layout，且该根因修复后固定条件颜色门槛通过。最终 latents 仍有 NRMSE `0.0967` 的后续 MLX 数值漂移，所以不能据此推广默认 MLX 路径；完整 GLB、Metal trace、配对性能/内存与真实 3D 查看仍是开放门槛。
+**当前结论**：候选版染红的第一可复现分叉是 MLX reference attention 的材质 V head layout，且该根因修复后固定条件颜色门槛通过。最终 latents 仍有 NRMSE `0.0967` 的后续 MLX 数值漂移，所以不能据此推广默认 MLX 路径；Metal trace、配对性能/内存和用户设备/独立查看验收仍是开放门槛。
 
 ## 7. 不要重复的失败尝试
 
@@ -169,13 +171,13 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 ## 8. 下一位 agent 的建议顺序
 
 1. 先读本文件、`docs/torch-upgrade-mps-plan.md`、`docs/mlx-migration-roadmap.md`、验证报告；检查当前 branch/status、进程和 ComfyUI queue。保护 dirty 文件。重点先读 §6，根因已定位，不要重复第 7 节列出的失败实验。
-2. **颜色根因与固定条件复验已完成（§6.4）**：不要重复 Torch DINO、guidance 扫描或修复前 MLX 布局实验。后续颜色工作只用于完整 GLB/真实 3D 资产验收，或解释剩余 `latents_14` 数值漂移。
+2. **颜色根因、固定条件复验及完整 GLB 本地查看已完成（§6.4）**：不要重复 Torch DINO、guidance 扫描或修复前 MLX 布局实验。后续颜色工作用于用户设备/独立 3D 资产验收，或解释剩余 `latents_14` 数值漂移。
 3. 固定条件 Torch-only 与 hybrid 对照及修复后完整复验均已完成；复现命令在 §9.2。任何新增 GPU 实验必须使用 fresh output、1 GiB MLX idle-cache threshold、超时/内存观察并保持串行。
 4. GPU 证据：针对有界 Torch-only DINO/VAE/reference/first-step/超分阶段逐个采集 Metal trace。审计发现 CPU 例外需要真实尺寸数值对照后再修改，不能凭 16 个小算子测试移除 bake workaround。
 5. 内存/速度：相同 cache policy、固定实际随机张量、相同输入下串行旧/新配对与重复；监测 swap/框架 active/cache/driver，保留失败记录。未通过质量/trace/内存前不要推广候选默认环境。
 6. 这些门槛完成后再按 MLX roadmap 逐步迁移。全 MLX 并不自动更快，需要端到端测量和质量对照。
 
-当前阶段判定：P0/P1 完成；P2 placement/calls 完成但 trace 未过；P3 bounded ops 完成但真实 bake CPU 例外未解；**P4 颜色——旧版全黑与候选 hybrid 染红根因均已定位，MLX reference layout 修复后的固定条件颜色复验通过，完整 GLB/真实 3D 资产验收未完成**；P5 配对性能与内存验收未完成。
+当前阶段判定：P0/P1 完成；P2 placement/calls 完成但 trace 未过；P3 bounded ops 完成但真实 bake CPU 例外未解；**P4 颜色——旧版全黑与候选 hybrid 染红根因均已定位，MLX reference layout 修复后的固定条件颜色复验通过，完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 配对性能与内存验收未完成。
 
 ## 9. 可复制验证命令
 
