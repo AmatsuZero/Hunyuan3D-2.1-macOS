@@ -213,10 +213,12 @@ venv/原 checkout 的扩展。以下每个阶段都可独立回退到上一通�
 ## 6. 证据与计划状态
 
 R0 混合基线、P2/P3 设备与 bake 门槛以及 P5 栈级性能账本已完成；R1 的 inner
-UNet 权重 bundle 已通过 Torch-free strict load。R1 的 `.safetensors` bundle、
-manifest 和 Torch-free smoke 保留在外部 evidence，不进入 Git。当前默认 hybrid
-dispatch 仍从 PyTorch checkpoint 加载，R2/R3 尚未切换；因此“全 MLX 推理”仍未
-完成。上面的性能收益均为待证假设，不能据现有代码注释的 SDPA 倍数推算最终速度。
+UNet 权重 bundle 已通过 Torch-free strict load。R2 RealESRGAN/RRDB 独立 MLX
+试点已通过真实尺寸数值对照，但稳态约慢 2.3–2.5 倍，未切换默认超分路径；证据见
+`HANDOFF-r2-realesrgan-20261028.md`。R1/R2 的 `.safetensors` bundle、manifest
+和原始输出保留在外部 evidence，不进入 Git。当前默认 hybrid dispatch 仍从
+PyTorch checkpoint 加载，R3 尚未切换；因此“全 MLX 推理”仍未完成。上面的性能
+收益均为待证假设，不能据现有代码注释的 SDPA 倍数推算最终速度。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。
 当前已验收代码、Torch 升级风险和颜色缺陷分别见同目录的
