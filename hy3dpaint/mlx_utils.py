@@ -13,6 +13,7 @@ to complete on the Metal GPU. It is NOT Python's built-in eval().
 
 import os
 import time
+from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
@@ -269,7 +270,14 @@ class MLXDispatchUNet(torch.nn.Module):
         # Steps 2-15 — MLX
         if os.environ.get("HUNYUAN_MLX_COMPARE"):
             return self._compare_forward(sample, timestep, encoder_hidden_states, args, kwargs)
-        return self._mlx_forward(sample, timestep)
+        started = time.perf_counter()
+        result = self._mlx_forward(sample, timestep)
+        if os.environ.get("HUNYUAN_MLX_TIMING"):
+            print(f"  [MLX] Step {self._gen_call_count}: elapsed={time.perf_counter() - started:.3f}s "
+                  f"active={mx.get_active_memory() / 1024**3:.3f}GiB "
+                  f"cache={mx.get_cache_memory() / 1024**3:.3f}GiB "
+                  f"peak={mx.get_peak_memory() / 1024**3:.3f}GiB", flush=True)
+        return result
 
     def _compare_forward(self, sample, timestep, encoder_hidden_states, args, kwargs):
         """Run both PyTorch and MLX, compare outputs numerically."""
@@ -279,13 +287,98 @@ class MLXDispatchUNet(torch.nn.Module):
               f"mean={s.mean():.4f}, dtype={sample.dtype}, shape={list(sample.shape)}")
         print(f"  [MLX-COMPARE] Timestep: {timestep.item():.1f}")
 
+        trace = {}
+        hooks = []
+        trace_enabled = bool(os.environ.get("HUNYUAN_MLX_TRACE"))
+        trace_dir = os.environ.get("HUNYUAN_MLX_TRACE_DIR") if trace_enabled else None
+        if trace_enabled:
+            def save_torch(name):
+                def hook(_module, _inputs, result):
+                    value = result[0] if isinstance(result, tuple) else result
+                    if name in {"down_0_mda", "down_0_ref", "down_0_mva"}:
+                        value = value.reshape(-1, 4096, value.shape[-1])
+                    trace[name] = value.detach().cpu().float().numpy()
+                return hook
+
+            def save_torch_input(name):
+                def hook(_module, inputs, _result):
+                    trace[name] = inputs[0].detach().cpu().float().numpy()
+                return hook
+
+            hooks.append(self._original.conv_in.register_forward_hook(save_torch("conv_in")))
+            hooks.append(self._original.down_blocks[0].resnets[0].register_forward_hook(save_torch("down_0_resnet_0")))
+            first_transformer = self._original.down_blocks[0].attentions[0].transformer_blocks[0]
+            hooks.append(first_transformer.attn1.register_forward_hook(save_torch("down_0_mda")))
+            hooks.append(first_transformer.attn_refview.register_forward_hook(save_torch("down_0_ref")))
+            hooks.append(first_transformer.attn_refview.to_q.register_forward_hook(save_torch("down_0_ref_q")))
+            hooks.append(first_transformer.attn_refview.to_k.register_forward_hook(save_torch("down_0_ref_k")))
+            hooks.append(first_transformer.attn_refview.to_v.register_forward_hook(save_torch("down_0_ref_v")))
+            hooks.append(first_transformer.attn_refview.processor.to_v_mr.register_forward_hook(save_torch("down_0_ref_v_mr")))
+            hooks.append(first_transformer.attn_refview.to_out[0].register_forward_hook(
+                save_torch("down_0_ref_out_a")))
+            hooks.append(first_transformer.attn_refview.processor.to_out_mr[0].register_forward_hook(
+                save_torch("down_0_ref_out_mr")))
+            hooks.append(first_transformer.attn_refview.to_out[0].register_forward_hook(
+                save_torch_input("down_0_ref_attn_a")))
+            hooks.append(first_transformer.attn_refview.processor.to_out_mr[0].register_forward_hook(
+                save_torch_input("down_0_ref_attn_mr")))
+            norm_q = getattr(first_transformer.attn_refview, "norm_q", None)
+            norm_k = getattr(first_transformer.attn_refview, "norm_k", None)
+            print(f"    [REF-SDPA] Torch norms: norm_q={type(norm_q).__name__ if norm_q is not None else None} "
+                  f"norm_k={type(norm_k).__name__ if norm_k is not None else None}")
+            if norm_q is not None:
+                hooks.append(norm_q.register_forward_hook(save_torch("down_0_ref_q_norm")))
+            if norm_k is not None:
+                hooks.append(norm_k.register_forward_hook(save_torch("down_0_ref_k_norm")))
+            hooks.append(first_transformer.attn_multiview.register_forward_hook(save_torch("down_0_mva")))
+            hooks.append(self._original.down_blocks[0].attentions[0].register_forward_hook(save_torch("down_0_attn_0")))
+            hooks.append(self._original.down_blocks[0].resnets[1].register_forward_hook(save_torch("down_0_resnet_1")))
+            hooks.append(self._original.down_blocks[0].attentions[1].register_forward_hook(save_torch("down_0_attn_1")))
+            hooks.append(self._original.down_blocks[0].register_forward_hook(save_torch("down_0")))
+
         # PyTorch MPS
-        pt_out = self._original(sample, timestep, encoder_hidden_states, *args, **kwargs)
+        try:
+            pt_out = self._original(sample, timestep, encoder_hidden_states, *args, **kwargs)
+        finally:
+            for hook in hooks:
+                hook.remove()
         pt_arr = pt_out[0].detach().cpu().float().numpy()
 
         # MLX
-        mlx_out = self._mlx_forward(sample, timestep)
+        mlx_trace = {}
+        def save_mlx(name, value):
+            mx.eval(value)
+            mlx_trace[name] = np.array(value.transpose(0, 3, 1, 2) if value.ndim == 4 else value).astype(np.float32)
+
+        mlx_started = time.perf_counter()
+        mlx_out = self._mlx_forward(sample, timestep, debug_trace=save_mlx if trace else None)
+        if os.environ.get("HUNYUAN_MLX_TIMING"):
+            print(f"  [MLX] Step {self._gen_call_count}: elapsed={time.perf_counter() - mlx_started:.3f}s "
+                  f"active={mx.get_active_memory() / 1024**3:.3f}GiB "
+                  f"cache={mx.get_cache_memory() / 1024**3:.3f}GiB "
+                  f"peak={mx.get_peak_memory() / 1024**3:.3f}GiB", flush=True)
         mlx_arr = mlx_out[0].detach().cpu().float().numpy()
+
+        if trace_dir:
+            destination = Path(trace_dir) / f"step-{self._gen_call_count}"
+            destination.mkdir(parents=True, exist_ok=False)
+            for source, records in (("torch", trace), ("mlx", mlx_trace)):
+                for name, value in records.items():
+                    if name.startswith("down_0_ref") or name in {"conv_in", "down_0"}:
+                        np.save(destination / f"{source}_{name}.npy", value, allow_pickle=False)
+
+        for name, pt_value in trace.items():
+            mlx_value = mlx_trace.get(name)
+            if mlx_value is None:
+                print(f"    [MLX-TRACE] {name}: missing MLX trace")
+                continue
+            if pt_value.shape != mlx_value.shape:
+                print(f"    [MLX-TRACE] {name}: shape mismatch torch={pt_value.shape} mlx={mlx_value.shape}")
+                continue
+            difference = pt_value.astype(np.float64) - mlx_value.astype(np.float64)
+            norm = np.linalg.norm(pt_value.astype(np.float64))
+            print(f"    [MLX-TRACE] {name}: nrmse={np.linalg.norm(difference) / norm:.6f} "
+                  f"mean_abs={np.abs(difference).mean():.6f} max_abs={np.abs(difference).max():.6f}")
 
         # Compare
         abs_diff = np.abs(pt_arr - mlx_arr)
@@ -346,7 +439,7 @@ class MLXDispatchUNet(torch.nn.Module):
         precision = "fp32" if self._use_fp32 else "fp16"
         print(f"  [MLX] Cached {len(cached)} inputs for steps 2-15 ({precision})")
 
-    def _mlx_forward(self, sample, timestep):
+    def _mlx_forward(self, sample, timestep, debug_trace=None):
         """Run MLX model and convert output back to PyTorch."""
         c = self._cached_mlx
         dtype = self._mlx_dtype
@@ -365,6 +458,7 @@ class MLXDispatchUNet(torch.nn.Module):
             position_voxel_indices=c["position_voxel_indices"],
             ref_scale=c["ref_scale"],
             mva_scale=c["mva_scale"],
+            debug_trace=debug_trace,
         )
 
         # mx.eval forces lazy computation to complete on Metal GPU

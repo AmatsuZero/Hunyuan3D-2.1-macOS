@@ -184,6 +184,7 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
         num_inference_steps=15,
         return_dict=True,
         sync_condition=None,
+        reference_scale=None,
         **cached_condition,
     ):
 
@@ -302,7 +303,13 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
                 cached_condition["ref_latents"] = cached_condition["ref_latents"].repeat(
                     3, *([1] * (cached_condition["ref_latents"].dim() - 1))
                 )
-                cached_condition["ref_scale"] = torch.as_tensor([0.0, 1.0, 1.0]).to(cached_condition["ref_latents"])
+                if reference_scale is None:
+                    reference_scale = 1.0
+                cached_condition["ref_scale"] = torch.as_tensor(
+                    [0.0, reference_scale, reference_scale],
+                    device=cached_condition["ref_latents"].device,
+                    dtype=cached_condition["ref_latents"].dtype,
+                )
 
             if self.unet.use_dino:
                 zero_states = torch.zeros_like(cached_condition["dino_hidden_states"])

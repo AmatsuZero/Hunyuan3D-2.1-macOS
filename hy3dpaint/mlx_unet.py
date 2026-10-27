@@ -252,6 +252,20 @@ class Basic2p5DTransformerBlock(nn.Module):
         out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
         return out.transpose(0, 2, 1, 3).reshape(B, N_q, -1)
 
+    def _sdpa_reference_values(self, q, k, values, B):
+        """Match the checkpoint processor's concatenated material-value layout."""
+        N_q, N_kv = q.shape[1], k.shape[1]
+        q = q.reshape(B, N_q, self.heads, self.head_dim).transpose(0, 2, 1, 3)
+        k = k.reshape(B, N_kv, self.heads, self.head_dim).transpose(0, 2, 1, 3)
+        joined = mx.concatenate(values, axis=-1)
+        joined = joined.reshape(B, N_kv, self.heads, self.head_dim * len(values))
+        outputs = []
+        for value in mx.split(joined, len(values), axis=-1):
+            value = value.transpose(0, 2, 1, 3)
+            output = mx.fast.scaled_dot_product_attention(q, k, value, scale=self.scale)
+            outputs.append(output.transpose(0, 2, 1, 3).reshape(B, N_q, self.dim))
+        return outputs
+
     def __call__(
         self,
         hidden_states: mx.array,         # (B*N_pbr*N_gen, seq, dim)
@@ -295,6 +309,9 @@ class Basic2p5DTransformerBlock(nn.Module):
         attn_mr = attn_mr.reshape(B, 1, num_in_batch, -1, self.dim)
         attn_output = mx.concatenate([attn_albedo, attn_mr], axis=1)
         attn_output = attn_output.reshape(batch_size, -1, self.dim)
+        debug_trace = getattr(self, "_debug_trace", None)
+        if debug_trace is not None:
+            debug_trace("down_0_mda", attn_output)
 
         hidden_states = attn_output + hidden_states
 
@@ -306,22 +323,41 @@ class Basic2p5DTransformerBlock(nn.Module):
 
         q_ref = self.attn_ref_to_q(ref_q_hs)
         k_ref = self.attn_ref_to_k(condition_embed)
+        if debug_trace is not None:
+            debug_trace("down_0_ref_q", q_ref)
+            debug_trace("down_0_ref_k", k_ref)
 
-        # Albedo V + out
+        # The checkpoint processor concatenates material V projections before
+        # splitting them into heads, then splits each head's output by material.
+        # Preserve that trained layout; separate attention calls reorder channels.
         v_ref_a = self.attn_ref_to_v(condition_embed)
-        ref_out_a = self._sdpa(q_ref, k_ref, v_ref_a, B)
-        ref_out_a = self.attn_ref_to_out(ref_out_a)
-
-        # MR V + out
+        if debug_trace is not None:
+            debug_trace("down_0_ref_v", v_ref_a)
         v_ref_m = self.attn_ref_to_v_mr(condition_embed)
-        ref_out_m = self._sdpa(q_ref, k_ref, v_ref_m, B)
+        if debug_trace is not None:
+            debug_trace("down_0_ref_v_mr", v_ref_m)
+        ref_out_a, ref_out_m = self._sdpa_reference_values(
+            q_ref, k_ref, [v_ref_a, v_ref_m], B
+        )
+        if debug_trace is not None:
+            debug_trace("down_0_ref_attn_a", ref_out_a)
+        ref_out_a = self.attn_ref_to_out(ref_out_a)
+        if debug_trace is not None:
+            debug_trace("down_0_ref_out_a", ref_out_a)
+
+        if debug_trace is not None:
+            debug_trace("down_0_ref_attn_mr", ref_out_m)
         ref_out_m = self.attn_ref_to_out_mr(ref_out_m)
+        if debug_trace is not None:
+            debug_trace("down_0_ref_out_mr", ref_out_m)
 
         # Stack PBR and reshape back: (B, N_pbr, N, L, C) → (B*N_pbr*N, L, C)
         ref_out_a = ref_out_a.reshape(B, 1, num_in_batch, -1, self.dim)
         ref_out_m = ref_out_m.reshape(B, 1, num_in_batch, -1, self.dim)
         ref_out = mx.concatenate([ref_out_a, ref_out_m], axis=1)
         ref_out = ref_out.reshape(batch_size, -1, self.dim)
+        if debug_trace is not None:
+            debug_trace("down_0_ref", ref_out)
 
         # ref_scale may be float or (B,) array — broadcast to (B*N_pbr*N, 1, 1)
         if isinstance(ref_scale, mx.array) and ref_scale.ndim >= 1:
@@ -355,6 +391,8 @@ class Basic2p5DTransformerBlock(nn.Module):
 
         # Reshape back: (B*N_pbr, N*L, C) → (B*N_pbr*N, L, C)
         mv_out = mv_out.reshape(batch_size, -1, self.dim)
+        if debug_trace is not None:
+            debug_trace("down_0_mva", mv_out)
 
         hidden_states = mva_scale * mv_out + hidden_states
 
@@ -445,10 +483,15 @@ class CrossAttnDownBlock2D(nn.Module):
     def __call__(self, x, temb, encoder_hs, num_in_batch, condition_embed_dict,
                  dino_hs, position_voxel_indices, ref_scale, mva_scale):
         states = []
-        for resnet, attn in zip(self.resnets, self.attentions):
+        for index, (resnet, attn) in enumerate(zip(self.resnets, self.attentions)):
             x = resnet(x, temb)
+            debug_trace = getattr(self, "_debug_trace", None)
+            if debug_trace is not None:
+                debug_trace(f"down_0_resnet_{index}", x)
             x = attn(x, encoder_hs, num_in_batch, condition_embed_dict,
                      dino_hs, position_voxel_indices, ref_scale, mva_scale)
+            if debug_trace is not None:
+                debug_trace(f"down_0_attn_{index}", x)
             states.append(x)
         if self.has_downsample:
             x = self.downsample(x)
@@ -617,6 +660,7 @@ class HunyuanInnerUNet(nn.Module):
         position_voxel_indices: Optional[dict] = None,
         ref_scale: float = 1.0,
         mva_scale: float = 1.0,
+        debug_trace=None,
     ) -> mx.array:
         # Convert NCHW → NHWC
         x = sample.transpose(0, 2, 3, 1)
@@ -630,6 +674,8 @@ class HunyuanInnerUNet(nn.Module):
 
         # Conv in
         x = self.conv_in(x)
+        if debug_trace is not None:
+            debug_trace("conv_in", x)
 
         # Common kwargs for attention blocks
         attn_kwargs = dict(
@@ -644,7 +690,17 @@ class HunyuanInnerUNet(nn.Module):
 
         # Down
         residuals = [x]
-        x, states = self.down_block_0(x, temb, **attn_kwargs)
+        if debug_trace is not None:
+            self.down_block_0._debug_trace = debug_trace
+            self.down_block_0.attentions[0].transformer_blocks[0]._debug_trace = debug_trace
+        try:
+            x, states = self.down_block_0(x, temb, **attn_kwargs)
+        finally:
+            if debug_trace is not None:
+                self.down_block_0._debug_trace = None
+                self.down_block_0.attentions[0].transformer_blocks[0]._debug_trace = None
+        if debug_trace is not None:
+            debug_trace("down_0", x)
         residuals.extend(states)
         x, states = self.down_block_1(x, temb, **attn_kwargs)
         residuals.extend(states)

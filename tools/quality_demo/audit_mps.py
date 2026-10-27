@@ -4,6 +4,8 @@ Run in a fresh process with PYTORCH_ENABLE_MPS_FALLBACK unset for --mode audit.
 Placement audit is not a substitute for an Instruments Metal trace.
 """
 import argparse
+import hashlib
+import importlib
 import importlib.util
 import json
 import os
@@ -12,6 +14,64 @@ import shutil
 import sys
 import threading
 import time
+
+
+def _runtime_object_source(name, value):
+    if value is None:
+        return None
+    cls = type(value)
+    module_name = cls.__module__
+    module = importlib.import_module(module_name)
+    module_file = getattr(module, "__file__", None)
+    source = {
+        "name": name,
+        "class": f"{module_name}.{cls.__qualname__}",
+        "module": module_name,
+        "module_file": module_file,
+    }
+    if module_file and Path(module_file).is_file():
+        source["module_sha256"] = hashlib.sha256(Path(module_file).read_bytes()).hexdigest()
+    return source
+
+
+def runtime_sources(pipe, model_dir=None):
+    """Record model classes and processors, including Diffusers cache modules."""
+    outer = getattr(pipe, "unet", None)
+    inner = getattr(outer, "unet", None)
+    dual = getattr(outer, "unet_dual", None)
+    torch_inner = getattr(inner, "_original", inner)
+    sources = {
+        "pipeline": _runtime_object_source("pipeline", pipe),
+        "outer_unet": _runtime_object_source("outer_unet", outer),
+        "inner_unet": _runtime_object_source("inner_unet", inner),
+        "inner_unet_torch": _runtime_object_source("inner_unet_torch", torch_inner),
+        "reference_unet": _runtime_object_source("reference_unet", dual),
+    }
+    reference_processor = None
+    for module in (torch_inner, dual, outer):
+        if module is None or not hasattr(module, "modules"):
+            continue
+        for candidate in module.modules():
+            attention = getattr(candidate, "attn_refview", None)
+            processor = getattr(attention, "processor", None) if attention is not None else None
+            if processor is not None:
+                reference_processor = processor
+                break
+        if reference_processor is not None:
+            break
+    sources["reference_processor"] = _runtime_object_source("reference_processor", reference_processor)
+    if model_dir is not None:
+        expected_root = Path(model_dir).resolve() / "unet"
+        for key, filename in (("outer_unet", "modules.py"),
+                              ("reference_processor", "attn_processor.py")):
+            expected = expected_root / filename
+            record = sources[key]
+            record["model_source_file"] = str(expected)
+            record["model_source_sha256"] = hashlib.sha256(expected.read_bytes()).hexdigest()
+            record["matches_model_source"] = (
+                record.get("module_sha256") == record["model_source_sha256"]
+            )
+    return sources
 
 
 def install_initial_noise(pipe, fixture_path, capture_path):
@@ -191,6 +251,14 @@ def main():
         report["mlx_device"] = str(mx.default_device())
         mv = pipeline.models["multiview_model"]
         pipe = mv.pipeline
+        model_dir = Path(run_paint.LOCAL_MODELS) / "hunyuan3d-paintpbr-v2-1"
+        report["runtime_sources"] = runtime_sources(pipe, model_dir)
+        mismatches = [name for name in ("outer_unet", "reference_processor")
+                      if not report["runtime_sources"][name]["matches_model_source"]]
+        if mismatches:
+            raise audit_module.AuditError(
+                f"Diffusers dynamic module cache differs from model source: {mismatches}"
+            )
         original_prepare = install_initial_noise(pipe, args.initial_noise, out / 'initial-latents.npy')
         restored.append((pipe, 'prepare_latents', original_prepare))
         if args.initial_noise is not None:
@@ -231,6 +299,14 @@ def main():
         report["module_paths"] = {name: module.__file__ for name, module in sys.modules.items()
                                   if getattr(module, "__file__", None) and name.split(".")[0] in
                                   ("textureGenPipeline", "utils", "hunyuanpaintpbr", "DifferentiableRenderer", "custom_rasterizer", "custom_rasterizer_kernel", "mlx_utils", "run_paint")}
+        report["dynamic_module_paths"] = {
+            name: module.__file__ for name, module in sys.modules.items()
+            if getattr(module, "__file__", None) and name.split(".")[0] == "diffusers_modules"
+        }
+        report["source_provenance_note"] = (
+            "Dynamic Diffusers model modules are reported separately because they are loaded "
+            "from the Hugging Face module cache; workspace contamination checks cover local modules."
+        )
         for name, file in report["module_paths"].items():
             if not Path(file).resolve().is_relative_to(args.checkout.resolve()):
                 raise audit_module.AuditError(f"source contamination: {name}: {file}")

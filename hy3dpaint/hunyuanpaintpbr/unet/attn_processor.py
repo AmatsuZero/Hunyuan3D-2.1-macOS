@@ -962,10 +962,16 @@ class RefAttnProcessor2_0(BaseAttnProcessor):
         for token in ["_" + token for token in self.pbr_settings if token != "albedo"]:
             value_list.append(getattr(attn.processor, f"to_v{token}")(encoder_hidden_states))
 
-        # Run SDPA separately per PBR type (MPS truncates V when head_dim differs from Q/K)
+        # The checkpoint concatenates all material values before dividing into
+        # heads. Split each resulting head into material-sized values so MPS
+        # can run SDPA with equal Q/K/V head dimensions without reordering the
+        # trained channels.
+        value = torch.cat(value_list, dim=-1)
+        value = value.view(batch_size, -1, attn.heads, head_dim * len(value_list))
+        value_list = [part.transpose(1, 2) for part in value.split(head_dim, dim=-1)]
+
         output_hidden_states_list = []
         for i, value in enumerate(value_list):
-            value = AttnUtils.reshape_qkv_for_attention(value, batch_size, attn.heads, head_dim)
             attn_out = _chunked_sdpa(
                 query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
             )
