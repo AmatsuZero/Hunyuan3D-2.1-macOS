@@ -218,8 +218,10 @@ UNet 权重 bundle 已通过 Torch-free strict load。R2 RealESRGAN/RRDB 独立 
 `HANDOFF-r2-realesrgan-20261028.md`。R1/R2 的 `.safetensors` bundle、manifest
 和原始输出保留在外部 evidence，不进入 Git。当前默认 hybrid dispatch 仍从
 PyTorch checkpoint 加载。R3 已有 opt-in inner UNet bundle dispatch，两步 fresh
-checkpoint 对照逐元素一致（见 `HANDOFF-r3-bundle-dispatch-20261028.md`）；reference、
-首步、scheduler 和逐步 bridge 仍是 Torch，因此“全 MLX 推理”仍未完成。上面的性能
+checkpoint 对照逐元素一致（见 `HANDOFF-r3-bundle-dispatch-20261028.md`）；
+UniPC scheduler 已对真实 15 步张量做独立 MLX replay（见
+`HANDOFF-r3-unipc-scheduler-20261028.md`）。reference、首步、正式循环的 scheduler
+和逐步 bridge 仍是 Torch，因此“全 MLX 推理”仍未完成。上面的性能
 收益均为待证假设，不能据现有代码注释的 SDPA 倍数推算最终速度。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。

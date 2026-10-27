@@ -498,6 +498,9 @@ def stage_capture(args):
     step_state = {"count": 0}
 
     def scheduler_step(*call_args, **call_kwargs):
+        captured.setdefault("scheduler_model_output", []).append(call_args[0].detach().cpu())
+        captured.setdefault("scheduler_sample", []).append(call_args[2].detach().cpu())
+        captured.setdefault("scheduler_timestep", []).append(torch.as_tensor(call_args[1]).detach().cpu())
         result = original_step(*call_args, **call_kwargs)
         latents = result[0] if isinstance(result, tuple) else result
         captured.setdefault("latents", []).append(latents)
@@ -557,6 +560,13 @@ def stage_capture(args):
                 report["records"].append(save_npy(out, name + "_" + str(index), item))
         else:
             report["records"].append(save_npy(out, name, value))
+
+    report["scheduler"] = {
+        "class": type(pipe.scheduler).__name__,
+        "config": dict(pipe.scheduler.config),
+        "timesteps": pipe.scheduler.timesteps.detach().cpu().tolist(),
+        "sigmas": pipe.scheduler.sigmas.detach().cpu().tolist(),
+    }
 
     (out / "capture.json").write_text(json.dumps(report, indent=2) + "\n")
     if restore is not None:
