@@ -160,6 +160,7 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 - 该 GLB 的 Blender 5.2.3 CPU 四视图（`glb-view-0/90/180/270.png`）显示正面黑 H/Y/D、红 3，侧面与背面贴图连续，没有翻转或丢失。这个本地查看结果不替代用户设备或独立 3D 查看验收。
 - 新增固定条件性能/漂移重复证据在 `color-diagnosis/perf-torch-repeat01/`、`perf-hybrid-repeat01/` 及其 `*-compare.json`。两轮均注入同一 Torch 2.14.1 条件张量和 `initial-noise-torch251-seed0.npy`，只比较 15 步扩散与 12 张诊断视图，不写 GLB。Torch-only 重跑与此前结果逐元素一致；Hybrid 重跑 `noise_pred_0` 完全一致，但 `noise_pred_1` NRMSE `0.00623`、`noise_pred_14` `0.03630`、`latents_14` `0.04704`，12 张图平均绝对像素差约 `0.314/255`。这是 MLX 重复运行漂移证据，不能归因给 Torch 版本。
 - 两次 2 步 `HUNYUAN_MLX_COMPARE=1` 内部张量 trace（`color-diagnosis/nondet-trace-a/`、`nondet-trace-b/`）进一步确认：第 2 步首个 down block 的 `conv_in`、MDA、reference Q/K/V、reference attention、MVA 及 block 输出在两次运行间逐元素一致；最终 MLX 输出的范围统计不同，而每次对 Torch 的 mean abs 约 `0.0133`。后续应保存两次完整 MLX 输出并逐段追踪剩余 block，才能确定具体漂移算子。这不是 P2 所需的 Metal GPU trace。
+- `HUNYUAN_MLX_FP32=1` 两次 2 步对照（`color-diagnosis/nondet-fp32-a/`、`nondet-fp32-b/`）仍在第 2 步出现差异：初始噪声、reference 和首步输出完全一致，`noise_pred_1` NRMSE `0.004894`、mean abs `0.001522`。fp32 未消除非确定性；不要把该现象归结为简单 fp16 累积误差或当作已修复。
 
 **当前结论**：候选版染红的第一可复现分叉是 MLX reference attention 的材质 V head layout，且该根因修复后固定条件颜色门槛通过。修复后 Hybrid 对 Torch-only 的最终 latents NRMSE 原轮为 `0.0967`、新增轮为 `0.0913`；Hybrid 自身重复运行的最终 latents NRMSE 为 `0.0470`，显示 MLX 路径仍有数值漂移。因此不能据此推广默认 MLX 路径；Metal trace、旧/新版完整配对性能/内存和用户设备/独立查看验收仍是开放门槛。
 
