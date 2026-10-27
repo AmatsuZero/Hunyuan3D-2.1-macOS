@@ -81,6 +81,21 @@ The production smoke returned finite texture `[4096,4096,3]`, cosine `[4096,4096
 
 This closes the real-size bake CPU workaround for the candidate path. It does not prove that mesh/UV/native work, `.cpu().numpy()` bridges or inpaint are GPU-only, and it is not a matched old/new performance result. The stage handoff is [`HANDOFF-p3-bake-mps-20261027.md`](../HANDOFF-p3-bake-mps-20261027.md).
 
+## P5 serialized performance and memory samples (2026-10-28)
+
+With the ComfyUI queue empty before and after each run, the candidate and preserved old checkout each completed three full paint benchmarks. The mesh, six views, 512 resolution, 15 steps, fixed initial diffusion-noise fixture, 1 GiB MLX free-cache threshold and serialized execution order were matched. Fresh output directories were used for every run. The compact evidence is `p5-performance-01/summary.json` under the external evidence root.
+
+| Stack | Torch | fallback env | Median total | Median inference | Range |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Candidate worktree | 2.14.1 | 0 | 117.711 s | 107.722 s | 117.180–123.536 s |
+| Protected old checkout | 2.5.1 | 1 | 196.740 s | 185.052 s | 194.004–199.497 s |
+
+The current-stack median difference is about 40.2% total and 41.8% inference. This is not a Torch-only speedup claim: the old checkout uses a different MLX reference/upsampler implementation and requires fallback=1 for its known bicubic gap; the candidate includes the MLX layout/weight fixes and P3 MPS bake path. Only the input mesh, initial diffusion latents, cache threshold and serial conditions are matched. VAE posterior sampling and image-condition randomness were not replayed, so repeated output bytes are not expected to match.
+
+Memory samples are overlapping counters and must not be summed. Candidate versus old median RSS / sampled MPS driver peak / MLX peak were approximately `8.20 / 26.46 / 5.64 GiB` versus `11.02 / 36.67 / 8.98 GiB`. Candidate swap deltas ranged `−0.65–+3.32 GiB`; old ranged `+6.97–+9.06 GiB`. Swap is system-wide and counters depend on sampling; this is not a safe 48 GiB memory acceptance or a default-switch decision.
+
+The P5 handoff is [`HANDOFF-p5-performance-memory-20261028.md`](../HANDOFF-p5-performance-memory-20261028.md). New-session creation was attempted again and failed at the local Codex transport (`http://127.0.0.1:54618/mcp` send error); no bypass was used.
+
 ## Completed cache-budget experiment and final checkpoint
 
 `candidate-audit-06-cache1g/audit.json` records a successful strict full run (exit 0), with automatic fallback set to 0 and the experimental MLX free-cache reclaim threshold at 1 GiB:

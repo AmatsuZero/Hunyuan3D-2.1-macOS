@@ -4,7 +4,7 @@
 
 ## 1. 接手结论
 
-- 当前阶段是 **隔离验证 Torch 2.5.1 → 2.14.1**，随后按 roadmap 逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；P3 真实 bake CPU 例外已完成数值对照并移除旧 workaround（见 §12）；下一步是 P5 配对性能/内存。尚未切换默认环境，也没有开始全面 MLX 迁移。
+- 当前阶段是 **隔离验证 Torch 2.5.1 → 2.14.1**，随后按 roadmap 逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；P3 真实 bake CPU 例外已完成数值对照并移除旧 workaround（见 §12）；P5 已完成三轮串行旧/新版 benchmark 样本（见 §13）。尚未切换默认环境，也没有开始全面 MLX 迁移。
 - 新版已完成关闭自动 fallback 的完整上色；所审计神经网络的参数、计算输入/输出均在 MPS，MLX 部分在 Metal。P2 命名 Torch-only 窗口已有目标 PID 的 Metal trace；不能据此宣称全流水线都在 GPU：显式 CPU 路径仍存在，完整 pipeline 的 trace 验收仍未完成。
 - 颜色诊断已闭环到固定条件及本地完整 GLB 复验：旧版（Torch 2.5.1）全黑 HY3D 来自 MPS bicubic/DINO 错误；候选版早期 hybrid 的 H/Y/D 染红来自 MLX reference attention 材质 V head layout；后续重复漂移来自 MLX loader 漏载 `up_block_0` upsampler 权重。根因均已修复，修复后固定条件 15 步 hybrid 及完整 GLB 的 Blender 四视图恢复黑 H/Y/D、红 3。用户设备/独立 3D 查看仍未验收。
 - 相同 seed 在两个 Torch 版本下产生不同实际噪声，旧的同 seed 对比不充分。把旧版实际初始噪声注入修复前候选 hybrid 后 H/Y/D 仍红——**初始噪声不是染红根因（负结果保留）**；后续纯 Torch/hybrid 固定条件对照才把分叉定位到 MLX reference attention。
@@ -92,7 +92,7 @@
 | P2 Torch-only Metal trace | DINO、VAE encode/decode、reference UNet、first-step UNet、RealESRGAN 命名窗口均有目标 PID 的 PyTorchMPS signpost 与 Metal GPU interval，fallback 0、stage 全时段落在 trace 内；这不是全流水线“全 GPU”证明。详情 §11。 |
 | 受控性能重复 | 修复 upsampler 权重漏载后，同一固定条件 Hybrid 两次为 67.812/68.498 s，逐步张量和 12 张图逐元素一致；相对此前 Torch-only 181.897/211.721 s 的诊断轮分别快 62.7%/67.6%。这仍是固定条件扩散阶段结果，不是完整旧/新版性能验收。 |
 | P3 bake | 真实尺寸 CPU/MPS 有效像素与输出逐元素对照通过；旧 MPS CPU workaround 已移除，完整严格 audit 通过。详情 §12。 |
-| 内存/性能门槛 | 仍未通过旧版/新版完整配对重复实验和安全内存验收；运行期间系统 swap 约 23–26 GiB，不能据此推广候选默认环境。 |
+| 内存/性能门槛 | P5 已完成旧/新版各 3 次串行完整栈样本（§13），候选栈中位数较快且内存计数较低；Torch-only 归因和 48 GiB 安全内存验收仍开放，不能据此推广候选默认环境。 |
 | 独立 review | native reviewer 多次 429，无独立审查通过；仅作者复查 |
 | MLX reference layout 修复 | checkpoint 的 reference processor 先把 albedo/MR value 投影拼接后按 attention head 切分；MLX 原先分别切 head，导致第 2 步 reference 输出 NRMSE 1.329121。保持训练通道排列后降至 0.002778；完整 15 步固定条件 hybrid 在 1 GiB MLX cache limit 下完成，H/Y/D 红色占比均 0，3 红色占比 0.3525（纯 Torch 0.3545）。 |
 | MLX upsampler 权重修复 | 原 loader 漏掉 `up_blocks.0.upsamplers.0.conv.weight/bias`，导致每次 MLX 模型新建时 `up_block_0` 卷积随机初始化；补齐 OIHW→OHWI 加载后，重复 2 步和完整 15 步输出均逐元素稳定。 |
@@ -168,7 +168,7 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 - 修复前两次 2 步 `HUNYUAN_MLX_COMPARE=1` 内部 trace（`color-diagnosis/nondet-trace-a/`、`nondet-trace-b/`）及 FP32 对照（`nondet-fp32-a/b/`）记录了漏载 upsampler 权重导致的分叉；这些目录保留为负证据，不是当前实现的漂移结论，也不是 P2 所需的 Metal GPU trace。
 - 外部 stage wrapper 的 fp16 trace（`color-diagnosis/stage-trace-c/d/e/f`）证明 `down_0..3`、`mid`、所有 down 残差、`up_0` 三个 ResNet 与 nearest 输入逐元素一致，只有 `up_0_upsample` 输出 NRMSE `1.419`；FP32 `stage-trace-g/h` 同样 NRMSE `1.414`。检查 loader 后确认 `up_blocks.0.upsamplers.0.conv.weight/bias` 漏载，导致每次随机初始化；并非 Metal kernel 非确定性。修复后 `stage-trace-fixed-a/b` 的 `up_0_upsample`、`up_0` 和最终输出均逐元素一致。
 
-**当前结论**：候选版染红和重复运行漂移的两个代码根因均已修复：reference attention 材质 V head layout，以及 MLX loader 漏载 `up_block_0` upsampler 权重。修复后固定条件 Hybrid 两次逐元素稳定，最终 `latents_14` 相对 Torch-only NRMSE `0.003734`；完整严格 GLB audit 与 Blender 本地查看通过。P2 命名 Torch-only Metal trace 已通过；P3 bake CPU workaround 已通过真实尺寸数值对照并移除。旧/新版完整配对性能/内存和用户设备/独立查看验收仍开放；尚未切换默认 MLX 路径。
+**当前结论**：候选版染红和重复运行漂移的两个代码根因均已修复：reference attention 材质 V head layout，以及 MLX loader 漏载 `up_block_0` upsampler 权重。修复后固定条件 Hybrid 两次逐元素稳定，最终 `latents_14` 相对 Torch-only NRMSE `0.003734`；完整严格 GLB audit 与 Blender 本地查看通过。P2 命名 Torch-only Metal trace 已通过；P3 bake CPU workaround 已通过真实尺寸数值对照并移除。P5 已有三轮串行旧/新版栈级性能/内存样本，但不能归因成 Torch 版本单独加速；用户设备/独立查看和默认环境切换仍开放，尚未切换默认 MLX 路径。
 
 ## 7. 不要重复的失败尝试
 
@@ -184,10 +184,10 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 2. **颜色根因、固定条件复验及完整 GLB 本地查看已完成（§6.4）**：不要重复 Torch DINO、guidance 扫描、修复前 MLX 布局或 upsampler 权重实验。后续颜色工作用于用户设备/独立 3D 资产验收。
 3. 固定条件 Torch-only 与 hybrid 对照及修复后完整复验均已完成；复现命令在 §9.2。任何新增 GPU 实验必须使用 fresh output、1 GiB MLX idle-cache threshold、超时/内存观察并保持串行。
 4. GPU 证据：P2 命名 Torch-only trace 已完成（§11）；P3 真实尺寸 bake CPU 例外已通过数值对照并完成代码修改（§12）。这仍不证明完整 pipeline 全 GPU。
-5. 内存/速度：权重漏载修复已通过固定条件与完整 audit；后续用相同 cache policy、固定实际随机张量和相同输入做串行旧/新配对与重复，并监测 swap/框架 active/cache/driver。未通过性能/内存前不要推广候选默认环境。
+5. 内存/速度：P5 三轮串行样本已完成，见 §13；候选中位数总耗时 117.711s、旧版 196.740s，内存计数也较低，但差异混合了 Torch、MLX 修复和 fallback 配置，不能宣称 Torch-only 加速。未完成质量/设备/安全内存决策前不要推广候选默认环境。
 6. 这些门槛完成后再按 MLX roadmap 逐步迁移。全 MLX 并不自动更快，需要端到端测量和质量对照。
 
-当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 旧/新版完整配对性能与内存验收未完成。
+当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 三轮旧/新版栈级性能/内存样本完成，但 Torch-only 归因、安全内存与默认切换仍未通过。
 
 ## 9. 可复制验证命令
 
@@ -310,3 +310,7 @@ P2 trace gate 已完成。五个真实尺寸 Torch/MPS 窗口在候选 Torch 2.1
 ## 12. P3 真实尺寸 bake MPS 路径（2026-10-27）
 
 阶段交接见 [`HANDOFF-p3-bake-mps-20261027.md`](HANDOFF-p3-bake-mps-20261027.md)。Torch 2.14.1 的真实尺寸 MPS gather 可用；`torch.isin` 在约 11M 索引上会尝试约 348 GB MPSGraph 临时分配，因此改用保持顺序的 `inner_mask[valid_idx]`。小输入 CPU oracle 与真实尺寸 CPU/MPS 边界对照均通过。完整严格 audit 在新目录 `/private/tmp/hy3d-p3-bake-audit-01/` 以 fallback=0、15 步、2 次 bake 正常完成；小型审计证据已复制至外部 `p3-bake-mps-01/`。run09 对照的 multiview、enhance、inpaint 和最终贴图逐字节相同。bake 中间浮点数组最大绝对差小于 `0.001`；GLB 容器 hash 不同但几何、UV、内嵌贴图一致。剩余主要门槛是 P5 旧/新版配对性能/内存与用户设备/独立 3D 查看；不要仅由本次 bake 烟测宣称全流水线 GPU 或 Torch 升级加速。
+
+## 13. P5 串行性能/内存样本（2026-10-28）
+
+阶段交接见 [`HANDOFF-p5-performance-memory-20261028.md`](HANDOFF-p5-performance-memory-20261028.md)。在空 ComfyUI queue、相同 mesh/固定初始 diffusion noise/6 视角/512/15 步/1 GiB MLX cache threshold 下，候选 2.14.1 与旧版 2.5.1 各完成 3 次完整 benchmark。候选总耗时中位数 `117.711s`（范围 `117.180–123.536s`），旧版 `196.740s`（`194.004–199.497s`）；候选 RSS/MPS driver/MLX peak 中位数约 `8.20/26.46/5.64 GiB`，旧版约 `11.02/36.67/8.98 GiB`。旧版 swap delta 为 `+6.97–+9.06 GiB`，候选为 `−0.65–+3.32 GiB`。这些是当前两套完整栈的可复现样本，不是 Torch 2.14.1 的独立加速证明：旧版 fallback=1、旧 MLX layout/upsampler 和 bake 路径不同；只有输入 mesh、初始 diffusion latents、cache policy 与串行条件被匹配。外部摘要位于 `p5-performance-01/summary.json`。新会话创建仍因本地 `codex_tui` transport `http://127.0.0.1:54618/mcp` send error 失败，未绕过。
