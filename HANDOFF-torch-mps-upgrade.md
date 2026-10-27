@@ -88,7 +88,8 @@
 | 修复前 MLX parity | `capture-hybrid-compare-step2`：第一个 MLX step 的 Torch/MLX mean abs 0.047266、p99 0.398438、max 4.521484；`HUNYUAN_MLX_FP32=1` 仅降至 mean abs 0.046533，排除简单 fp16 累积。 |
 | DINO 跨版本 CPU 对照 | CPU 上 2.5.1 vs 2.14.1 的 DINO final 几乎一致（nrmse 0.0015），排除权重/输入差异；差异纯由 2.5.1 的 MPS 路径引起。 |
 | 全 GPU trace | 未通过；设备 placement/call audit 不等于完整 GPU trace |
-| 内存/性能 | 仍未通过配对重复实验，不能声称 Torch 升级加速或全流程安全内存 |
+| 受控性能重复 | 同一固定条件、同一初始噪声、同一候选环境下，Torch-only 两次为 181.897/211.721 s，Hybrid 两次为 115.981/126.497 s；逐轮 Hybrid 比 Torch-only 快 36.2%/40.3%，均值约 38.4%。Torch-only 两次张量和图像逐元素一致；Hybrid 重跑从 `noise_pred_1` 开始出现非确定性，不能视为稳定性能或数值验收。 |
+| 内存/性能门槛 | 仍未通过旧版/新版完整配对重复实验和安全内存验收；运行期间系统 swap 约 23–26 GiB，不能据此推广候选默认环境。 |
 | 独立 review | native reviewer 多次 429，无独立审查通过；仅作者复查 |
 | MLX reference layout 修复 | checkpoint 的 reference processor 先把 albedo/MR value 投影拼接后按 attention head 切分；MLX 原先分别切 head，导致第 2 步 reference 输出 NRMSE 1.329121。保持训练通道排列后降至 0.002778；完整 15 步固定条件 hybrid 在 1 GiB MLX cache limit 下完成，H/Y/D 红色占比均 0，3 红色占比 0.3525（纯 Torch 0.3545）。 |
 
@@ -157,8 +158,10 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 - Diffusers 真正执行的 outer UNet 是 `diffusers_modules.local.modules.UNet2p5DConditionModel`，reference processor 是 `diffusers_modules.local.attn_processor.RefAttnProcessor2_0`；基础 inner UNet 是环境里的 Diffusers `UNet2DConditionModel`。模型目录与缓存的 `attn_processor.py` SHA256 一致；工作区同名实现不是这次固定条件 Torch 路径。工作区实现已另有 CPU 回归测试覆盖相同 layout，但二者证据边界必须分开。CPU-only 真实 checkpoint 加载烟测已确认这些类和路径，未执行推理。
 - 修复后完整严格 GLB audit 目录：`/Users/daubert/Github/hy3d-upgrade-evidence/20261027/candidate-audit-08-ref-layout-fixed/`。`audit.json` exit 0，fallback=0，15 次生成（1 次 Torch + 14 次 MLX），inference `189.718 s`，总耗时 `214.979 s`，MLX peak `8.942 GiB`，source SHA 校验均为 `matches_model_source=true`。`textured.glb` 为 3,500,288 bytes，SHA256 `a4fe11daf92e584d434e524bd8fb406cd17dcee83fbf8fc5a87b50edfc5aa1cf`；结构为 24,087 顶点、40,000 面、1 个 PBR 材质、2048×2048 base-color，几何/UV 有限。
 - 该 GLB 的 Blender 5.2.3 CPU 四视图（`glb-view-0/90/180/270.png`）显示正面黑 H/Y/D、红 3，侧面与背面贴图连续，没有翻转或丢失。这个本地查看结果不替代用户设备或独立 3D 查看验收。
+- 新增固定条件性能/漂移重复证据在 `color-diagnosis/perf-torch-repeat01/`、`perf-hybrid-repeat01/` 及其 `*-compare.json`。两轮均注入同一 Torch 2.14.1 条件张量和 `initial-noise-torch251-seed0.npy`，只比较 15 步扩散与 12 张诊断视图，不写 GLB。Torch-only 重跑与此前结果逐元素一致；Hybrid 重跑 `noise_pred_0` 完全一致，但 `noise_pred_1` NRMSE `0.00623`、`noise_pred_14` `0.03630`、`latents_14` `0.04704`，12 张图平均绝对像素差约 `0.314/255`。这是 MLX 重复运行漂移证据，不能归因给 Torch 版本。
+- 两次 2 步 `HUNYUAN_MLX_COMPARE=1` 内部张量 trace（`color-diagnosis/nondet-trace-a/`、`nondet-trace-b/`）进一步确认：第 2 步首个 down block 的 `conv_in`、MDA、reference Q/K/V、reference attention、MVA 及 block 输出在两次运行间逐元素一致；最终 MLX 输出的范围统计不同，而每次对 Torch 的 mean abs 约 `0.0133`。后续应保存两次完整 MLX 输出并逐段追踪剩余 block，才能确定具体漂移算子。这不是 P2 所需的 Metal GPU trace。
 
-**当前结论**：候选版染红的第一可复现分叉是 MLX reference attention 的材质 V head layout，且该根因修复后固定条件颜色门槛通过。最终 latents 仍有 NRMSE `0.0967` 的后续 MLX 数值漂移，所以不能据此推广默认 MLX 路径；Metal trace、配对性能/内存和用户设备/独立查看验收仍是开放门槛。
+**当前结论**：候选版染红的第一可复现分叉是 MLX reference attention 的材质 V head layout，且该根因修复后固定条件颜色门槛通过。修复后 Hybrid 对 Torch-only 的最终 latents NRMSE 原轮为 `0.0967`、新增轮为 `0.0913`；Hybrid 自身重复运行的最终 latents NRMSE 为 `0.0470`，显示 MLX 路径仍有数值漂移。因此不能据此推广默认 MLX 路径；Metal trace、旧/新版完整配对性能/内存和用户设备/独立查看验收仍是开放门槛。
 
 ## 7. 不要重复的失败尝试
 
@@ -174,7 +177,7 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 2. **颜色根因、固定条件复验及完整 GLB 本地查看已完成（§6.4）**：不要重复 Torch DINO、guidance 扫描或修复前 MLX 布局实验。后续颜色工作用于用户设备/独立 3D 资产验收，或解释剩余 `latents_14` 数值漂移。
 3. 固定条件 Torch-only 与 hybrid 对照及修复后完整复验均已完成；复现命令在 §9.2。任何新增 GPU 实验必须使用 fresh output、1 GiB MLX idle-cache threshold、超时/内存观察并保持串行。
 4. GPU 证据：针对有界 Torch-only DINO/VAE/reference/first-step/超分阶段逐个采集 Metal trace。审计发现 CPU 例外需要真实尺寸数值对照后再修改，不能凭 16 个小算子测试移除 bake workaround。
-5. 内存/速度：相同 cache policy、固定实际随机张量、相同输入下串行旧/新配对与重复；监测 swap/框架 active/cache/driver，保留失败记录。未通过质量/trace/内存前不要推广候选默认环境。
+5. 内存/速度：继续用相同 cache policy、固定实际随机张量和相同输入做串行旧/新配对与重复；重点先定位 Hybrid 从 `noise_pred_1` 开始的非确定性，并监测 swap/框架 active/cache/driver。未通过质量/trace/内存和重复性前不要推广候选默认环境。
 6. 这些门槛完成后再按 MLX roadmap 逐步迁移。全 MLX 并不自动更快，需要端到端测量和质量对照。
 
 当前阶段判定：P0/P1 完成；P2 placement/calls 完成但 trace 未过；P3 bounded ops 完成但真实 bake CPU 例外未解；**P4 颜色——旧版全黑与候选 hybrid 染红根因均已定位，MLX reference layout 修复后的固定条件颜色复验通过，完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 配对性能与内存验收未完成。
