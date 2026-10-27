@@ -14,6 +14,39 @@ import threading
 import time
 
 
+def install_initial_noise(pipe, fixture_path, capture_path):
+    """Replay raw noise before the scheduler's scale; capture actual prepared latents."""
+    import inspect
+    import numpy as np
+    import torch
+
+    original = pipe.prepare_latents
+    signature = inspect.signature(original)
+    fixture = np.load(fixture_path, allow_pickle=False) if fixture_path is not None else None
+
+    def prepare(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        values = bound.arguments
+        if fixture is not None:
+            shape = (values['batch_size'], values['num_channels_latents'],
+                     values['height'] // pipe.vae_scale_factor, values['width'] // pipe.vae_scale_factor)
+            if fixture.shape != shape:
+                raise ValueError(f'initial noise shape {fixture.shape}, expected {shape}')
+            expected_dtype = np.dtype(str(values['dtype']).removeprefix('torch.'))
+            if fixture.dtype != expected_dtype:
+                raise ValueError(f'initial noise dtype {fixture.dtype}, expected {expected_dtype}')
+            if not np.isfinite(fixture).all():
+                raise ValueError('initial noise must be finite')
+            values['latents'] = torch.from_numpy(fixture)
+        result = original(*bound.args, **bound.kwargs)
+        np.save(capture_path, result.detach().cpu().numpy())
+        return result
+
+    pipe.prepare_latents = prepare
+    return original
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkout", type=Path, default=Path(__file__).resolve().parents[2])
@@ -21,6 +54,8 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--mode", choices=["audit", "benchmark"], default="audit")
     parser.add_argument("--signposts", action="store_true")
+    parser.add_argument("--initial-noise", type=Path,
+                        help="diagnostic raw-noise .npy fixture, applied before scheduler scaling")
     def non_negative(value):
         number = int(value)
         if number < 0:
@@ -33,6 +68,8 @@ def main():
         parser.error("strict audit requires PYTORCH_ENABLE_MPS_FALLBACK unset or 0 before import")
     if not args.mesh.is_file():
         parser.error("mesh does not exist")
+    if args.initial_noise is not None and not args.initial_noise.is_file():
+        parser.error("initial noise fixture does not exist")
     args.output_dir.mkdir(parents=True, exist_ok=False)
     out = args.output_dir.resolve()
     shutil.copy2(args.mesh, out / "input.glb")
@@ -154,6 +191,14 @@ def main():
         report["mlx_device"] = str(mx.default_device())
         mv = pipeline.models["multiview_model"]
         pipe = mv.pipeline
+        original_prepare = install_initial_noise(pipe, args.initial_noise, out / 'initial-latents.npy')
+        restored.append((pipe, 'prepare_latents', original_prepare))
+        if args.initial_noise is not None:
+            import hashlib
+            report['initial_noise_fixture'] = {
+                'path': str(args.initial_noise.resolve()),
+                'sha256': hashlib.sha256(args.initial_noise.read_bytes()).hexdigest(),
+                'scope': 'initial diffusion noise only; VAE sampling/conditions are not replayed'}
         if args.mode == "audit":
             targets = {
                 "inner_unet.torch": (dispatch._original, "forward"),
