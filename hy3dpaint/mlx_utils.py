@@ -157,7 +157,20 @@ def _load_transformer2d_weights(transformer2d, prefix: str, state_dict: dict):
         )
 
 
-def load_weights_from_pytorch(model: HunyuanInnerUNet, ckpt_path: str):
+class _TrackedStateDict(dict):
+    """Record checkpoint keys actually consumed by the explicit MLX mapping."""
+
+    def __init__(self, values):
+        super().__init__(values)
+        self.used_keys = set()
+
+    def __getitem__(self, key):
+        self.used_keys.add(key)
+        return super().__getitem__(key)
+
+
+def load_weights_from_pytorch(model: HunyuanInnerUNet, ckpt_path: str,
+                              return_used_keys: bool = False):
     """Load all weights from PyTorch checkpoint into MLX model."""
     print(f"  Loading PyTorch checkpoint: {ckpt_path}")
     t0 = time.time()
@@ -172,6 +185,8 @@ def load_weights_from_pytorch(model: HunyuanInnerUNet, ckpt_path: str):
     # Strip "unet." prefix if present
     if any(k.startswith("unet.") for k in state_dict):
         state_dict = {k.replace("unet.", "", 1): v for k, v in state_dict.items()}
+    if return_used_keys:
+        state_dict = _TrackedStateDict(state_dict)
 
     t0 = time.time()
 
@@ -234,6 +249,8 @@ def load_weights_from_pytorch(model: HunyuanInnerUNet, ckpt_path: str):
             _load_upsample_weights(block.upsample, f"{prefix}.upsamplers.0.conv", state_dict)
 
     print(f"  Weights mapped in {time.time() - t0:.1f}s")
+    if return_used_keys:
+        return state_dict.used_keys
 
 
 # ──────────────────────────────────────────────────────────────────────────────

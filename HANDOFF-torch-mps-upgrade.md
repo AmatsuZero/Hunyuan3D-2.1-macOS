@@ -185,9 +185,9 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 3. 固定条件 Torch-only 与 hybrid 对照及修复后完整复验均已完成；复现命令在 §9.2。任何新增 GPU 实验必须使用 fresh output、1 GiB MLX idle-cache threshold、超时/内存观察并保持串行。
 4. GPU 证据：P2 命名 Torch-only trace 已完成（§11）；P3 真实尺寸 bake CPU 例外已通过数值对照并完成代码修改（§12）。这仍不证明完整 pipeline 全 GPU。
 5. 内存/速度：P5 三轮串行样本已完成，见 §13；候选中位数总耗时 117.711s、旧版 196.740s，内存计数也较低，但差异混合了 Torch、MLX 修复和 fallback 配置，不能宣称 Torch-only 加速。未完成质量/设备/安全内存决策前不要推广候选默认环境。
-6. 这些门槛完成后再按 MLX roadmap 逐步迁移。全 MLX 并不自动更快，需要端到端测量和质量对照。
+6. R1 权重 bundle 已完成（见 `HANDOFF-r1-mlx-weight-bundle-20261028.md`）。继续按 MLX roadmap 进入 R2/R3；当前默认 hybrid dispatch 仍从 Torch checkpoint 加载，不能宣称全 MLX。全 MLX 并不自动更快，需要端到端测量和质量对照。
 
-当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 三轮旧/新版栈级性能/内存样本完成，但 Torch-only 归因、安全内存与默认切换仍未通过。
+当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 三轮旧/新版栈级性能/内存样本完成，但 Torch-only 归因、安全内存与默认切换仍未通过；R1 inner UNet 权重 bundle 的 Torch-free strict load 完成，R2/R3 迁移未完成。
 
 ## 9. 可复制验证命令
 
