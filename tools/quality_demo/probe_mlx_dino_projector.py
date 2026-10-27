@@ -17,14 +17,26 @@ KEY_PREFIX = "unet.image_proj_model_dino."
 WEIGHT_NAMES = ("proj.weight", "proj.bias", "norm.weight", "norm.bias")
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--bundle", type=Path)
     parser.add_argument("--features", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("refusing to overwrite an existing report")
+    if bool(args.config) != bool(args.bundle):
+        parser.error("--config and --bundle must be supplied together")
 
     import torch
     import torch.nn.functional as functional
@@ -55,7 +67,15 @@ def main():
 
     mx.set_default_device(mx.gpu)
     candidate = MLXDinoProjector(input_dim, output_dim, extra_tokens)
-    candidate.load_weights([(name, mx.array(value)) for name, value in weights.items()], strict=True)
+    if args.bundle:
+        from hy3dpaint.mlx_condition_bundle import load_bundle
+        source_sha = sha256_file(args.checkpoint)
+        config_sha = sha256_file(args.config)
+        bundle_arrays, _ = load_bundle(args.bundle, source_sha, config_sha)
+        candidate.load_weights([(name, bundle_arrays["image_proj_model_dino." + name])
+                                for name in WEIGHT_NAMES], strict=True)
+    else:
+        candidate.load_weights([(name, mx.array(value)) for name, value in weights.items()], strict=True)
     actual_mx = candidate(mx.array(features))
     mx.eval(actual_mx)
     actual = np.array(actual_mx)
@@ -63,7 +83,8 @@ def main():
     report = {
         "checkpoint": str(args.checkpoint.resolve()),
         "features": str(args.features.resolve()),
-        "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
+        "bundle": str(args.bundle.resolve()) if args.bundle else None,
+        "features_sha256": sha256_file(args.features),
         "input_shape": list(features.shape),
         "output_shape": list(actual.shape),
         "dtype": str(actual.dtype),

@@ -221,8 +221,9 @@ PyTorch checkpoint 加载。R3 已有 opt-in inner UNet bundle dispatch，两步
 checkpoint 对照逐元素一致（见 `HANDOFF-r3-bundle-dispatch-20261028.md`）；
 UniPC scheduler 已对真实 15 步张量做独立 MLX replay（见
 `HANDOFF-r3-unipc-scheduler-20261028.md`）；外层 DINO projector 已通过真实权重
-Torch/MPS 与 MLX/GPU 数值对照（见 `HANDOFF-r3-dino-projector-20261028.md`）。
-reference、首步、正式循环的 scheduler
+Torch/MPS 与 MLX/GPU 数值对照（见 `HANDOFF-r3-dino-projector-20261028.md`）；
+7 组 outer condition 权重已独立打包并通过 Torch-free load（见
+`HANDOFF-r3-condition-bundle-20261028.md`）。reference、首步、正式循环的 scheduler
 和逐步 bridge 仍是 Torch，因此“全 MLX 推理”仍未完成。上面的性能
 收益均为待证假设，不能据现有代码注释的 SDPA 倍数推算最终速度。
 框架转换与同步边界参考
