@@ -1259,7 +1259,6 @@ class MeshRender:
             w2c = torch.from_numpy(r_mv).to(self.tex_position)
             v_proj = self.tex_position @ w2c.T @ img_proj
             inner_mask = (v_proj[:, 0] <= 1.0) & (v_proj[:, 0] >= -1.0) & (v_proj[:, 1] <= 1.0) & (v_proj[:, 1] >= -1.0)
-            inner_valid_idx = torch.where(inner_mask)[0].long()
             img_x = torch.clamp(
                 ((v_proj[:, 0].clamp(-1, 1) * 0.5 + 0.5) * (resolution[0])).long(), 0, resolution[0] - 1
             )
@@ -1269,9 +1268,11 @@ class MeshRender:
 
             indices = img_y * resolution[0] + img_x
 
-            # MPS advanced indexing crashes with large int64 index tensors (12M+
-            # elements) due to a PyTorch/MPS bug.  Run on CPU and move back.
-            _on_cpu = (self.device != "cuda")
+            # Torch 2.14.1 handles the real-size MPS gather used here. Keep
+            # indexing on the active accelerator; only an explicitly CPU
+            # renderer should take the CPU path. The old implementation moved
+            # every non-CUDA device to CPU, hiding the upgraded MPS behavior.
+            _on_cpu = self.device == "cpu"
             def _to(t):
                 return t.cpu() if _on_cpu else t
             def _back(t):
@@ -1286,8 +1287,10 @@ class MeshRender:
 
             valid_idx = torch.where((torch.abs(v_z - sampled_z) < depth_thres) & (sampled_m * sampled_w > 0))[0]
 
-            intersection_mask = torch.isin(valid_idx, _to(inner_valid_idx))
-            valid_idx = valid_idx[intersection_mask]
+            # `inner_valid_idx` is derived from `inner_mask` in the same order;
+            # indexing the mask is equivalent and avoids MPSGraph's enormous
+            # temporary allocation for torch.isin on ~11M-element arrays.
+            valid_idx = valid_idx[inner_mask[valid_idx]]
 
             indices_w = indices_w[valid_idx]
             sampled_b = _to(sketch_image.reshape(-1))[indices_w]

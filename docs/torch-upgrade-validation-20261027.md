@@ -66,10 +66,20 @@ The first probe version failed in the **CPU reference**, where Half antialiased 
 - Matching old/new benchmark runs and repeatability remain incomplete.
 - Explicit reference-write audit and correlated Metal GPU execution evidence.
 - Color-quality regression diagnosis using saved multiview, super-resolution, bake and inpaint intermediates.
-- Real-size bake CPU indexing exception; mesh/UV/inpaint and framework bridges remain CPU/native as documented.
+- P3 real-size bake CPU indexing exception is closed for Torch 2.14.1 MPS after a real-size numerical comparison; mesh/UV/inpaint and framework bridges remain CPU/native as documented.
 - Default switch only after quality, device/trace, memory and stable performance gates pass. Preserve the original environment throughout.
 
 No full MLX migration has started. This validation provides the baseline and failure fixtures for its later stages.
+
+## P3 real-size bake MPS closure
+
+The production `back_sample` path in `hy3dpaint/DifferentiableRenderer/MeshRender.py` now keeps the gather on the active MPS device when `self.device == "mps"`; only an explicitly CPU renderer uses the CPU branch. The previous `self.device != "cuda"` condition moved MPS to CPU and hid the upgraded path. The large-index membership check now uses `valid_idx[inner_mask[valid_idx]]`. It is mathematically equivalent to the prior `torch.isin(valid_idx, inner_valid_idx)` because `inner_valid_idx` was derived from `inner_mask` in the same order, while avoiding a real-size MPSGraph fused allocation.
+
+Evidence was collected sequentially with Torch 2.14.1 and `PYTORCH_ENABLE_MPS_FALLBACK=0`. A 12M-element MPS gather succeeded. The complete real-size chain with `torch.isin` failed closed with `Failed to allocate MTLBuffer of 348204000000 B for oversized fused alloc`; the mask-index equivalent completed. A small CPU oracle matched MPS element-for-element. Against the run09 mesh (`11,175,499` UV positions, `4096×4096` texture), the CPU/MPS valid index set and sampled RGB/weight/boundary matched exactly; final texture, cosine map and boundary also had maximum absolute difference `0`. The diagnostic MPS path was about `0.033 s` versus `0.705 s` for the CPU reference.
+
+The production smoke returned finite texture `[4096,4096,3]`, cosine `[4096,4096,1]` and flat boundary `[16777216]` outputs without writing a GLB. The strict audit in `/private/tmp/hy3d-p3-bake-audit-01/` exited 0 with fallback 0, 15 steps, two bake calls, and `18.383 / 115.243 / 133.640 s` load/inference/total. The compact external evidence is `p3-bake-mps-01/{summary.json,audit.json,events.jsonl,timings.jsonl}`. Compared with `candidate-audit-09-up0-loaded`, multiview, enhance, inpaint, OBJ/MTL/JPG and metallic/roughness outputs were byte-identical. Bake albedo/MR arrays differed by at most `0.000448`/`0.000638` (19 values above `1e-5`, none above `1e-3`); boundary arrays were identical. The GLB container hash changed, but vertices, faces, UVs, material and embedded textures matched.
+
+This closes the real-size bake CPU workaround for the candidate path. It does not prove that mesh/UV/native work, `.cpu().numpy()` bridges or inpaint are GPU-only, and it is not a matched old/new performance result. The stage handoff is [`HANDOFF-p3-bake-mps-20261027.md`](../HANDOFF-p3-bake-mps-20261027.md).
 
 ## Completed cache-budget experiment and final checkpoint
 
@@ -98,7 +108,7 @@ The same bounded operator probe was run against the preserved old environment wi
 
 The targeted/full unit suite passed 19 tests, including existing shape/mesh tests, checkout isolation, MPS availability/CPU-placement rejection, direct VAE output inspection, missing-stage rejection, overwrite protection, immediate failed-event persistence and cache-argument validation. Python compilation and `git diff --check` passed. Native reviewer dispatch failed with 429; a separate author review was performed, with no independent review approval claimed. Minor deferred: repeated parameter metadata makes audit reports larger; these instrumented runs are not used for speed claims.
 
-Phase outcome: P0/P1 complete; P2 placement/call checks and named Torch-only Metal trace coverage complete; P3 bounded operator parity complete, real-size bake exception open; P4 structure and fixed-condition color diagnosis passed with user/device acceptance open; P5 matched performance/memory acceptance open. Stop promotion at these gates. Keep broad MLX migration and default version changes pending.
+Phase outcome: P0/P1 complete; P2 placement/call checks and named Torch-only Metal trace coverage complete; P3 bounded operator parity and real-size bake MPS closure complete, with explicit CPU/native boundaries documented; P4 structure and fixed-condition color diagnosis passed with user/device acceptance open; P5 matched performance/memory acceptance open. Stop promotion at these gates. Keep broad MLX migration and default version changes pending.
 
 Experimental tooling and this report are committed on the isolated upgrade branch, without changing the default environment. The inherited runtime prerequisites (native linker path, bounded attention workspace and local MLX weight lookup) are recorded separately from newly authored audit changes. The unrelated root `torchvision_fix.py` modification is excluded; the verified entry uses `hy3dpaint/utils/torchvision_fix.py`. Model weights, GLBs, raw traces and machine-specific evidence remain external artifacts, not Git payloads. No default-switch, quality, complete GPU-trace or stable-speed acceptance is implied by committing this checkpoint.
 

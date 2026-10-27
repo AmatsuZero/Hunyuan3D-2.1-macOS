@@ -4,7 +4,7 @@
 
 ## 1. 接手结论
 
-- 当前阶段是 **隔离验证 Torch 2.5.1 → 2.14.1**，随后按 roadmap 逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；下一步是 P3 真实 bake CPU 例外与 P5 配对性能/内存。尚未切换默认环境，也没有开始全面 MLX 迁移。
+- 当前阶段是 **隔离验证 Torch 2.5.1 → 2.14.1**，随后按 roadmap 逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；P3 真实 bake CPU 例外已完成数值对照并移除旧 workaround（见 §12）；下一步是 P5 配对性能/内存。尚未切换默认环境，也没有开始全面 MLX 迁移。
 - 新版已完成关闭自动 fallback 的完整上色；所审计神经网络的参数、计算输入/输出均在 MPS，MLX 部分在 Metal。P2 命名 Torch-only 窗口已有目标 PID 的 Metal trace；不能据此宣称全流水线都在 GPU：显式 CPU 路径仍存在，完整 pipeline 的 trace 验收仍未完成。
 - 颜色诊断已闭环到固定条件及本地完整 GLB 复验：旧版（Torch 2.5.1）全黑 HY3D 来自 MPS bicubic/DINO 错误；候选版早期 hybrid 的 H/Y/D 染红来自 MLX reference attention 材质 V head layout；后续重复漂移来自 MLX loader 漏载 `up_block_0` upsampler 权重。根因均已修复，修复后固定条件 15 步 hybrid 及完整 GLB 的 Blender 四视图恢复黑 H/Y/D、红 3。用户设备/独立 3D 查看仍未验收。
 - 相同 seed 在两个 Torch 版本下产生不同实际噪声，旧的同 seed 对比不充分。把旧版实际初始噪声注入修复前候选 hybrid 后 H/Y/D 仍红——**初始噪声不是染红根因（负结果保留）**；后续纯 Torch/hybrid 固定条件对照才把分叉定位到 MLX reference attention。
@@ -57,7 +57,7 @@
 - Paint：参考网络 `unet_dual`、第一次生成 UNet、DINO、VAE、RealESRGAN 用 Torch/MPS；其余 14 次生成 UNet 调用用 MLX/Metal（总 15 步）。CLIP text 路径未调用，checkpoint 用 learned text embeddings；图像条件由 DINO 提供。
 - 实际加载的外层 Torch UNet 与 reference processor 来自 Diffusers 动态模块缓存 `diffusers_modules.local`，源文件由模型目录 `hunyuan3d-paintpbr-v2-1/unet/` 复制。缓存 `attn_processor.py` 与模型文件 SHA256 同为 `a3f7c70e...a91088`，但与工作区 `hy3dpaint/hunyuanpaintpbr/unet/attn_processor.py` 不同；后者的 CPU layout 回归测试只证明工作区实现，不能冒充正式运行路径。诊断与正式审计现在都会把实际类、模块名和模块文件写入报告。
 - 形状路线仍按旧方案运行，本轮未变更/重跑。
-- 显式 CPU 仍包括 `hy3dpaint/DifferentiableRenderer/MeshRender.py` 大索引 bake workaround（`_on_cpu = self.device != "cuda"`）、Torch/MLX `.cpu().numpy()` 桥接、mesh/UV/inpaint 等 native/预处理流程。
+- P3 已移除 `hy3dpaint/DifferentiableRenderer/MeshRender.py` 中强制 MPS bake 大索引转 CPU 的 workaround。显式 CPU/native 边界仍包括 Torch/MLX `.cpu().numpy()` 桥接、mesh/UV/inpaint 等流程；不能称全 pipeline GPU。
 
 关键代码：
 
@@ -82,7 +82,7 @@
 | run 07 设备事件 | reference Torch 1、first-generation Torch 1、outer UNet 15、DINO 1、VAE encode/decode 3/1、super-resolution 12 全通过；MLX 14 次 |
 | run 07 实际噪声 | `initial-latents.npy` 与旧 fixture 逐元素完全一致；UniPC initial sigma=1.0 |
 | MPS bounded ops | 新版 16/16；旧版 12/16，4 个 bicubic fp32/fp16 ±antialias 不支持 MPS（fallback 关闭） |
-| 测试 | 最新 30/30 unittest（正常 Metal 权限）；py_compile、git diff --check 通过 |
+| 测试 | P2 时 30/30 unittest（正常 Metal 权限）；P3 最新验证见 §12 |
 | GLB 结构与本地查看 | run 06/07/08/09 均为 24,087 个 UV-split 顶点、40,000 面、1 个 PBR 材质和 2 张内嵌贴图，几何有限。最终修复后的 run 09 Blender CPU 四视图核对了正面颜色及侧背面贴图连续性；用户设备/独立查看待验收。 |
 | 颜色（旧版 2.5.1） | FAIL 但根因已定位：2.5.1 MPS 缺 `upsample_bicubic2d` 内核，DINOv2 位置编码 37×37→16×16 bicubic 插值结果错误（cos vs CPU = −0.0014、nrmse 1.32），使 DINO 隐状态语义崩坏（final cos 0.29）。旧版全黑 HY3D 正是此错误的后果。 |
 | 颜色（候选版 2.14.1） | 固定条件及完整 GLB 本地查看通过：`demo.png` 是黑 H/Y/D、红 3；修复后的 15 步 hybrid 输出与 Blender 四视图保持该设计。该结论不覆盖默认环境或用户设备/独立 3D 查看。 |
@@ -91,6 +91,7 @@
 | DINO 跨版本 CPU 对照 | CPU 上 2.5.1 vs 2.14.1 的 DINO final 几乎一致（nrmse 0.0015），排除权重/输入差异；差异纯由 2.5.1 的 MPS 路径引起。 |
 | P2 Torch-only Metal trace | DINO、VAE encode/decode、reference UNet、first-step UNet、RealESRGAN 命名窗口均有目标 PID 的 PyTorchMPS signpost 与 Metal GPU interval，fallback 0、stage 全时段落在 trace 内；这不是全流水线“全 GPU”证明。详情 §11。 |
 | 受控性能重复 | 修复 upsampler 权重漏载后，同一固定条件 Hybrid 两次为 67.812/68.498 s，逐步张量和 12 张图逐元素一致；相对此前 Torch-only 181.897/211.721 s 的诊断轮分别快 62.7%/67.6%。这仍是固定条件扩散阶段结果，不是完整旧/新版性能验收。 |
+| P3 bake | 真实尺寸 CPU/MPS 有效像素与输出逐元素对照通过；旧 MPS CPU workaround 已移除，完整严格 audit 通过。详情 §12。 |
 | 内存/性能门槛 | 仍未通过旧版/新版完整配对重复实验和安全内存验收；运行期间系统 swap 约 23–26 GiB，不能据此推广候选默认环境。 |
 | 独立 review | native reviewer 多次 429，无独立审查通过；仅作者复查 |
 | MLX reference layout 修复 | checkpoint 的 reference processor 先把 albedo/MR value 投影拼接后按 attention head 切分；MLX 原先分别切 head，导致第 2 步 reference 输出 NRMSE 1.329121。保持训练通道排列后降至 0.002778；完整 15 步固定条件 hybrid 在 1 GiB MLX cache limit 下完成，H/Y/D 红色占比均 0，3 红色占比 0.3525（纯 Torch 0.3545）。 |
@@ -167,7 +168,7 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 - 修复前两次 2 步 `HUNYUAN_MLX_COMPARE=1` 内部 trace（`color-diagnosis/nondet-trace-a/`、`nondet-trace-b/`）及 FP32 对照（`nondet-fp32-a/b/`）记录了漏载 upsampler 权重导致的分叉；这些目录保留为负证据，不是当前实现的漂移结论，也不是 P2 所需的 Metal GPU trace。
 - 外部 stage wrapper 的 fp16 trace（`color-diagnosis/stage-trace-c/d/e/f`）证明 `down_0..3`、`mid`、所有 down 残差、`up_0` 三个 ResNet 与 nearest 输入逐元素一致，只有 `up_0_upsample` 输出 NRMSE `1.419`；FP32 `stage-trace-g/h` 同样 NRMSE `1.414`。检查 loader 后确认 `up_blocks.0.upsamplers.0.conv.weight/bias` 漏载，导致每次随机初始化；并非 Metal kernel 非确定性。修复后 `stage-trace-fixed-a/b` 的 `up_0_upsample`、`up_0` 和最终输出均逐元素一致。
 
-**当前结论**：候选版染红和重复运行漂移的两个代码根因均已修复：reference attention 材质 V head layout，以及 MLX loader 漏载 `up_block_0` upsampler 权重。修复后固定条件 Hybrid 两次逐元素稳定，最终 `latents_14` 相对 Torch-only NRMSE `0.003734`；完整严格 GLB audit 与 Blender 本地查看通过。P2 命名 Torch-only Metal trace 已通过；旧/新版完整配对性能/内存、真实 bake CPU 例外和用户设备/独立查看验收仍是开放门槛；尚未切换默认 MLX 路径。
+**当前结论**：候选版染红和重复运行漂移的两个代码根因均已修复：reference attention 材质 V head layout，以及 MLX loader 漏载 `up_block_0` upsampler 权重。修复后固定条件 Hybrid 两次逐元素稳定，最终 `latents_14` 相对 Torch-only NRMSE `0.003734`；完整严格 GLB audit 与 Blender 本地查看通过。P2 命名 Torch-only Metal trace 已通过；P3 bake CPU workaround 已通过真实尺寸数值对照并移除。旧/新版完整配对性能/内存和用户设备/独立查看验收仍开放；尚未切换默认 MLX 路径。
 
 ## 7. 不要重复的失败尝试
 
@@ -182,11 +183,11 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 1. 先读本文件、`docs/torch-upgrade-mps-plan.md`、`docs/mlx-migration-roadmap.md`、验证报告；检查当前 branch/status、进程和 ComfyUI queue。保护 dirty 文件。重点先读 §6，根因已定位，不要重复第 7 节列出的失败实验。
 2. **颜色根因、固定条件复验及完整 GLB 本地查看已完成（§6.4）**：不要重复 Torch DINO、guidance 扫描、修复前 MLX 布局或 upsampler 权重实验。后续颜色工作用于用户设备/独立 3D 资产验收。
 3. 固定条件 Torch-only 与 hybrid 对照及修复后完整复验均已完成；复现命令在 §9.2。任何新增 GPU 实验必须使用 fresh output、1 GiB MLX idle-cache threshold、超时/内存观察并保持串行。
-4. GPU 证据：P2 命名 Torch-only trace 已完成（§11）。下一步先处理 P3 真实 bake CPU 例外：必须做真实尺寸数值对照后才可修改，不能凭 16 个小算子测试移除 workaround。
-5. 内存/速度：权重漏载修复已通过固定条件与完整 audit；后续用相同 cache policy、固定实际随机张量和相同输入做串行旧/新配对与重复，并监测 swap/框架 active/cache/driver。未通过 P3/性能/内存前不要推广候选默认环境。
+4. GPU 证据：P2 命名 Torch-only trace 已完成（§11）；P3 真实尺寸 bake CPU 例外已通过数值对照并完成代码修改（§12）。这仍不证明完整 pipeline 全 GPU。
+5. 内存/速度：权重漏载修复已通过固定条件与完整 audit；后续用相同 cache policy、固定实际随机张量和相同输入做串行旧/新配对与重复，并监测 swap/框架 active/cache/driver。未通过性能/内存前不要推广候选默认环境。
 6. 这些门槛完成后再按 MLX roadmap 逐步迁移。全 MLX 并不自动更快，需要端到端测量和质量对照。
 
-当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 完成但真实 bake CPU 例外未解；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 旧/新版完整配对性能与内存验收未完成。
+当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 旧/新版完整配对性能与内存验收未完成。
 
 ## 9. 可复制验证命令
 
@@ -304,4 +305,8 @@ P2 trace gate 已完成。五个真实尺寸 Torch/MPS 窗口在候选 Torch 2.1
 | reference UNet | `p2-reference-trace-02` | 2,138 | 784 | pass |
 | first-step outer/inner UNet | `p2-first-step-trace-03` | 5,961 | 9,251 | pass |
 
-`p2-first-step-trace-02` 是负结果：目标 forward 完成，但 recorder 在 marker end 前约 5 秒结束；新增汇总器的 `fully_recorded` 检查会 fail closed。此次 trace 只证明上述命名窗口内目标进程执行 Metal GPU 工作，不证明显式 CPU preprocessing、mesh/UV/native bake、`.cpu().numpy()` 桥接或完整 pipeline 全程 GPU。P3 真实 bake CPU 例外仍开放。正常 Metal 权限下全量 unittest 为 30/30；独立 reviewer dispatch 仍因 429 未返回。
+`p2-first-step-trace-02` 是负结果：目标 forward 完成，但 recorder 在 marker end 前约 5 秒结束；新增汇总器的 `fully_recorded` 检查会 fail closed。此次 trace 只证明上述命名窗口内目标进程执行 Metal GPU 工作，不证明显式 CPU preprocessing、mesh/UV/native bake、`.cpu().numpy()` 桥接或完整 pipeline 全程 GPU。P3 后续关闭了真实 bake CPU workaround（§12）。P2 时正常 Metal 权限下全量 unittest 为 30/30；独立 reviewer dispatch 仍因 429 未返回。
+
+## 12. P3 真实尺寸 bake MPS 路径（2026-10-27）
+
+阶段交接见 [`HANDOFF-p3-bake-mps-20261027.md`](HANDOFF-p3-bake-mps-20261027.md)。Torch 2.14.1 的真实尺寸 MPS gather 可用；`torch.isin` 在约 11M 索引上会尝试约 348 GB MPSGraph 临时分配，因此改用保持顺序的 `inner_mask[valid_idx]`。小输入 CPU oracle 与真实尺寸 CPU/MPS 边界对照均通过。完整严格 audit 在新目录 `/private/tmp/hy3d-p3-bake-audit-01/` 以 fallback=0、15 步、2 次 bake 正常完成；小型审计证据已复制至外部 `p3-bake-mps-01/`。run09 对照的 multiview、enhance、inpaint 和最终贴图逐字节相同。bake 中间浮点数组最大绝对差小于 `0.001`；GLB 容器 hash 不同但几何、UV、内嵌贴图一致。剩余主要门槛是 P5 旧/新版配对性能/内存与用户设备/独立 3D 查看；不要仅由本次 bake 烟测宣称全流水线 GPU 或 Torch 升级加速。
