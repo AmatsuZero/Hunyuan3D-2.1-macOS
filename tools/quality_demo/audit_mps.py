@@ -164,7 +164,9 @@ def main():
               "fallback_env": os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK"),
               "status": "failed", "timings": timings, "memory_samples": samples,
               "trace_acceptance": "pending separate Metal trace inspection",
-              "color_acceptance": "pending; known red-3 failure must not be repaired for acceptance"}
+              "color_acceptance": (
+                  "pending manual asset-level color and 3D review; audit does not encode visual acceptance"
+              )}
     counters = {}
     restored = []
 

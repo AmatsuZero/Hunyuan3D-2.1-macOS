@@ -153,6 +153,8 @@ DINOv2 用 `F.interpolate(mode="bicubic", align_corners=False)` 把 37×37 的�
 - 完整修复复验目录：`/Users/daubert/Github/hy3d-upgrade-evidence/20261027/color-diagnosis/full-hybrid-refsplit-cache1g-g3-r1-m1-fixed/`。15 步 exit 0，12 张视图生成，耗时 `115.98 s`；MLX 第 2–15 步约 `6.5–7.7 s`，MLX peak `8.942 GiB`。`generated_0.png` 为黑 H/Y/D、红 3；区域红色占比 H/Y/D 均为 `0`，3 为 `0.3525`（纯 Torch `0.3545`）。最终 `latents_14` 相对纯 Torch NRMSE 从修复前 `0.4171` 降至 `0.0967`。
 - 完整运行能稳定完成的关键实验条件是 `--mlx-cache-limit-mib 1024`。这是 MLX 空闲缓存回收阈值，不是瞬时硬内存上限；不应把它误写成 1 GiB 总内存限制。
 - Diffusers 真正执行的 outer UNet 是 `diffusers_modules.local.modules.UNet2p5DConditionModel`，reference processor 是 `diffusers_modules.local.attn_processor.RefAttnProcessor2_0`；基础 inner UNet 是环境里的 Diffusers `UNet2DConditionModel`。模型目录与缓存的 `attn_processor.py` SHA256 一致；工作区同名实现不是这次固定条件 Torch 路径。工作区实现已另有 CPU 回归测试覆盖相同 layout，但二者证据边界必须分开。CPU-only 真实 checkpoint 加载烟测已确认这些类和路径，未执行推理。
+- 修复后完整严格 GLB audit 目录：`/Users/daubert/Github/hy3d-upgrade-evidence/20261027/candidate-audit-08-ref-layout-fixed/`。`audit.json` exit 0，fallback=0，15 次生成（1 次 Torch + 14 次 MLX），inference `189.718 s`，总耗时 `214.979 s`，MLX peak `8.942 GiB`，source SHA 校验均为 `matches_model_source=true`。`textured.glb` 为 3,500,288 bytes，SHA256 `a4fe11daf92e584d434e524bd8fb406cd17dcee83fbf8fc5a87b50edfc5aa1cf`；结构为 24,087 顶点、40,000 面、1 个 PBR 材质、2048×2048 base-color，几何/UV 有限。
+- 该 GLB 的 Blender 5.2.3 CPU 四视图（`glb-view-0/90/180/270.png`）显示正面黑 H/Y/D、红 3，侧面与背面贴图连续，没有翻转或丢失。这个本地查看结果不替代用户设备或独立 3D 查看验收。
 
 **当前结论**：候选版染红的第一可复现分叉是 MLX reference attention 的材质 V head layout，且该根因修复后固定条件颜色门槛通过。最终 latents 仍有 NRMSE `0.0967` 的后续 MLX 数值漂移，所以不能据此推广默认 MLX 路径；完整 GLB、Metal trace、配对性能/内存与真实 3D 查看仍是开放门槛。
 
