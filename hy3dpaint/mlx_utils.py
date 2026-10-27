@@ -537,6 +537,31 @@ def _tree_map_to_f32(tree):
 # Setup
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _load_inner_unet_weights(model: HunyuanInnerUNet, ckpt_path: str | None) -> str:
+    """Select a checked MLX bundle only when explicitly configured."""
+    bundle_path = os.environ.get("HUNYUAN_MLX_INNER_UNET_BUNDLE")
+    if bundle_path:
+        source_sha = os.environ.get("HUNYUAN_MLX_INNER_UNET_SOURCE_SHA256")
+        config_sha = os.environ.get("HUNYUAN_MLX_INNER_UNET_CONFIG_SHA256")
+        if not source_sha or not config_sha:
+            raise ValueError("bundle selection requires source and config SHA256")
+        try:
+            from .mlx_weight_bundle import load_model_weights
+        except ImportError:
+            from mlx_weight_bundle import load_model_weights
+        load_model_weights(
+            model, bundle_path,
+            expected_source_sha256=source_sha,
+            expected_config_sha256=config_sha,
+            expected_dtype="float16",
+        )
+        return "bundle"
+    if ckpt_path is None:
+        raise FileNotFoundError("inner UNet checkpoint not found")
+    load_weights_from_pytorch(model, ckpt_path)
+    return "checkpoint"
+
+
 def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
     """Replace pipeline's inner UNet with MLX dispatch wrapper.
 
@@ -562,7 +587,7 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
             ckpt_path = path
             break
 
-    if ckpt_path is None:
+    if ckpt_path is None and not os.environ.get("HUNYUAN_MLX_INNER_UNET_BUNDLE"):
         print("  [MLX] Checkpoint not found, falling back to PyTorch")
         return None
 
@@ -571,7 +596,8 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
     mlx_model = HunyuanInnerUNet()
     print(f"  [MLX] Model built in {time.time() - t0:.1f}s")
 
-    load_weights_from_pytorch(mlx_model, ckpt_path)
+    weight_source = _load_inner_unet_weights(mlx_model, ckpt_path)
+    print(f"  [MLX] Inner UNet weights loaded from {weight_source}")
 
     # Precision: fp16 (default) or fp32 (HUNYUAN_MLX_FP32=1)
     # The GEGLU bug was the real quality issue, not precision. fp16 should work fine.
