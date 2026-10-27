@@ -42,6 +42,12 @@ def _conv_weight_pt_to_mlx(w: torch.Tensor) -> mx.array:
     return mx.array(w.cpu().permute(0, 2, 3, 1).numpy())
 
 
+def _load_upsample_weights(upsample, prefix: str, state_dict: dict):
+    """Load a Diffusers upsampler Conv2d into the MLX OHWI layout."""
+    upsample.conv.weight = _conv_weight_pt_to_mlx(state_dict[f"{prefix}.weight"])
+    upsample.conv.bias = _pt_to_mx(state_dict[f"{prefix}.bias"])
+
+
 def _load_attention_weights(block, prefix: str, state_dict: dict, dim: int):
     """Load weights for a Basic2p5DTransformerBlock from PyTorch state dict."""
     p = prefix
@@ -209,6 +215,12 @@ def load_weights_from_pytorch(model: HunyuanInnerUNet, ckpt_path: str):
     # up_block_0: UpBlock2D (no attention)
     for i, resnet in enumerate(model.up_block_0.resnets):
         _load_resnet_weights(resnet, f"up_blocks.0.resnets.{i}", state_dict)
+    if model.up_block_0.has_upsample:
+        _load_upsample_weights(
+            model.up_block_0.upsample,
+            "up_blocks.0.upsamplers.0.conv",
+            state_dict,
+        )
 
     # up_blocks 1-3: CrossAttnUpBlock2D
     for block_idx, block in enumerate([model.up_block_1, model.up_block_2,
@@ -219,9 +231,7 @@ def load_weights_from_pytorch(model: HunyuanInnerUNet, ckpt_path: str):
         for i, attn in enumerate(block.attentions):
             _load_transformer2d_weights(attn, f"{prefix}.attentions.{i}", state_dict)
         if block.has_upsample:
-            us_prefix = f"{prefix}.upsamplers.0.conv"
-            block.upsample.conv.weight = get_conv(f"{us_prefix}.weight")
-            block.upsample.conv.bias = get(f"{us_prefix}.bias")
+            _load_upsample_weights(block.upsample, f"{prefix}.upsamplers.0.conv", state_dict)
 
     print(f"  Weights mapped in {time.time() - t0:.1f}s")
 
