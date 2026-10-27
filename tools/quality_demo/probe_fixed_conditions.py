@@ -471,6 +471,13 @@ def stage_capture(args):
         with trace_scope("reference", args.trace_stage, report):
             result = original_dual(*call_args, **call_kwargs)
         captured["reference_write"] = result[0] if isinstance(result, tuple) else result
+        if args.capture_cache:
+            cross = call_kwargs.get("cross_attention_kwargs") or {}
+            condition_embed_dict = cross.get("condition_embed_dict")
+            if isinstance(condition_embed_dict, dict):
+                captured["condition_embed_dict"] = {
+                    key: value.detach().cpu() for key, value in condition_embed_dict.items()
+                }
         if args.trace_stage == "reference":
             raise StopCapture("reference trace completed")
         return result
@@ -481,10 +488,26 @@ def stage_capture(args):
     original_inner = pipe.unet.unet.forward
 
     def inner_forward(*call_args, **call_kwargs):
+        if args.capture_cache and "generation_encoder_hidden_states" not in captured:
+            cross = call_kwargs.get("cross_attention_kwargs") or {}
+            if cross.get("mode") == "r":
+                positions = cross.get("position_voxel_indices") or {}
+                captured["position_voxel_indices"] = {
+                    str(key): {
+                        "voxel_indices": value["voxel_indices"].detach().cpu(),
+                        "voxel_resolution": int(value["voxel_resolution"]),
+                    }
+                    for key, value in positions.items()
+                }
+                encoder = call_kwargs.get("encoder_hidden_states")
+                if encoder is None and len(call_args) > 2:
+                    encoder = call_args[2]
+                if encoder is not None:
+                    captured["generation_encoder_hidden_states"] = encoder.detach().cpu()
         with trace_scope("first_step", args.trace_stage, report):
             return original_inner(*call_args, **call_kwargs)
 
-    if args.trace_stage:
+    if args.trace_stage or args.capture_cache:
         pipe.unet.unet.forward = inner_forward
 
     def unet_forward(*call_args, **call_kwargs):
@@ -554,12 +577,33 @@ def stage_capture(args):
             image.save(out / ("generated_" + str(index) + ".png"))
         report["generated_images"] = len(images)
 
+    cache_summary = {}
     for name, value in captured.items():
+        if name == "condition_embed_dict":
+            cache_summary["condition_layers"] = sorted(value)
+            for layer_name, tensor in value.items():
+                report["records"].append(save_npy(out, "condition_embed_" + layer_name.replace(".", "_"), tensor))
+            continue
+        if name == "position_voxel_indices":
+            cache_summary["position_entries"] = sorted(value)
+            cache_summary["position_resolutions"] = {
+                sequence: entry["voxel_resolution"] for sequence, entry in value.items()
+            }
+            for sequence, entry in value.items():
+                report["records"].append(save_npy(out, "position_voxel_indices_" + sequence,
+                                                   entry["voxel_indices"]))
+            continue
         if isinstance(value, list):
             for index, item in enumerate(value):
                 report["records"].append(save_npy(out, name + "_" + str(index), item))
         else:
             report["records"].append(save_npy(out, name, value))
+
+    if "generation_encoder_hidden_states" in captured:
+        encoder = captured["generation_encoder_hidden_states"]
+        cache_summary["generation_encoder_shape"] = list(encoder.shape)
+    if cache_summary:
+        report["cache_contract"] = cache_summary
 
     report["scheduler"] = {
         "class": type(pipe.scheduler).__name__,
@@ -615,6 +659,8 @@ def main():
                         help="leave VAE posterior sampling unfixed for sensitivity comparison")
     parser.add_argument("--mlx", action="store_true",
                         help="replace inner UNet with the repository MLX dispatch path")
+    parser.add_argument("--capture-cache", action="store_true",
+                        help="save first-request reference, position, and generation caches")
     parser.add_argument("--mlx-cache-limit-mib", type=int, default=None,
                         help="set MLX idle cache limit for capture diagnostics")
     parser.add_argument("--fallback", choices=("0", "1"), default="0")
@@ -626,6 +672,8 @@ def main():
     parser.add_argument("--right", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.capture_cache and args.stage != "capture":
+        parser.error("--capture-cache requires --stage capture")
     if args.wait_for_file and args.trace_stage != "first_step":
         parser.error("--wait-for-file requires --trace-stage first_step")
     if args.trace_stage:
