@@ -12,9 +12,14 @@
 # fine-tuning enabling code and other elements of the foregoing made publicly available
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
 
+import os
 import shutil
 from setuptools import setup, find_packages
+import torch
 from torch.utils.cpp_extension import BuildExtension
+
+_torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+_rpath_flags = [f"-Wl,-rpath,{_torch_lib}"]
 
 # Build custom rasterizer — use CUDA when nvcc compiler is available (build-time check),
 # CPU-only otherwise (macOS/non-NVIDIA). We check for nvcc rather than
@@ -42,7 +47,8 @@ else:
             "lib/custom_rasterizer_kernel/rasterizer.cpp",
             "lib/custom_rasterizer_kernel/grid_neighbor.cpp",
         ],
-        extra_compile_args=["-Wno-c++11-narrowing"],
+        extra_compile_args=["-Wno-c++11-narrowing", "-Wno-invalid-specialization"],
+        extra_link_args=_rpath_flags,
     )
 
 setup(

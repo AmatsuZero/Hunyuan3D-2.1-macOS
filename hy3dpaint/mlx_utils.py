@@ -428,6 +428,9 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
     # Find checkpoint path
     ckpt_path = None
     for path in [
+        os.environ.get("HUNYUAN_PAINT_UNET_CKPT", ""),
+        "/Users/daubert/Github/hunyuan3d-artifacts/Hunyuan3D-2.1-modelscope/"
+        "hunyuan3d-paintpbr-v2-1/unet/diffusion_pytorch_model.bin",
         os.path.expanduser(
             "~/.cache/huggingface/hub/models--tencent--Hunyuan3D-2.1/"
             "snapshots/0b94677654c57bb9a6b6845cd7b704ccf551d327/"
