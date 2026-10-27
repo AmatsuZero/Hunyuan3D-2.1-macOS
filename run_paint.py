@@ -11,7 +11,9 @@ import sys
 import time
 from pathlib import Path
 
-PAINT_ROOT = "/Users/daubert/Github/Hunyuan3D-2.1-macOS/hy3dpaint"
+REPO_ROOT = Path(__file__).resolve().parent
+PAINT_ROOT = str(REPO_ROOT / "hy3dpaint")
+REALESRGAN_CKPT = str(REPO_ROOT / "ckpt/RealESRGAN_x4plus.pth")
 RASTER_ROOT = os.path.join(PAINT_ROOT, "custom_rasterizer")
 LOCAL_MODELS = "/Users/daubert/Github/hunyuan3d-artifacts/Hunyuan3D-2.1-modelscope"
 IMAGE = "/Users/daubert/Github/hy3d-mlx-eval/demo.png"
@@ -61,7 +63,7 @@ def main(mesh_path: str, output_obj: str):
     Hunyuan3DPaintConfig, Hunyuan3DPaintPipeline = load_paint_dependencies()
     t0 = time.perf_counter()
     conf = Hunyuan3DPaintConfig(max_num_view=6, resolution=512)
-    conf.realesrgan_ckpt_path = "/Users/daubert/Github/Hunyuan3D-2.1-macOS/ckpt/RealESRGAN_x4plus.pth"
+    conf.realesrgan_ckpt_path = REALESRGAN_CKPT
     conf.multiview_pretrained_path = LOCAL_MODELS
     conf.dino_ckpt_path = "/Users/daubert/Github/hunyuan3d-artifacts/dinov2-giant"
     print("loading paint pipeline...", flush=True)
