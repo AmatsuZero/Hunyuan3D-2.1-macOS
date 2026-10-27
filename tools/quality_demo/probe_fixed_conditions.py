@@ -422,7 +422,11 @@ def stage_capture(args):
         mlx_dispatch = setup_mlx_dispatch(pipe)
         if mlx_dispatch is None:
             raise RuntimeError("requested MLX dispatch but setup_mlx_dispatch returned None")
-        report["mlx_dispatch"] = {"enabled": True, "fp32": bool(getattr(mlx_dispatch, "_use_fp32", False))}
+        report["mlx_dispatch"] = {
+            "enabled": True,
+            "fp32": bool(getattr(mlx_dispatch, "_use_fp32", False)),
+            "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
+        }
 
     injected = {}
     if args.inject:
@@ -488,9 +492,17 @@ def stage_capture(args):
     original_inner = pipe.unet.unet.forward
 
     def inner_forward(*call_args, **call_kwargs):
-        if args.capture_cache and "generation_encoder_hidden_states" not in captured:
+        capture_first_inner = args.capture_cache and "inner_sample" not in captured
+        if capture_first_inner:
             cross = call_kwargs.get("cross_attention_kwargs") or {}
             if cross.get("mode") == "r":
+                captured["inner_sample"] = call_args[0].detach().cpu()
+                captured["inner_timestep"] = torch.as_tensor(call_args[1]).detach().cpu()
+                if cross.get("dino_hidden_states") is not None:
+                    captured["inner_dino_hidden_states"] = cross["dino_hidden_states"].detach().cpu()
+                captured["inner_num_in_batch"] = int(cross.get("num_in_batch", 6))
+                captured["inner_ref_scale"] = cross.get("ref_scale", 1.0)
+                captured["inner_mva_scale"] = cross.get("mva_scale", 1.0)
                 positions = cross.get("position_voxel_indices") or {}
                 captured["position_voxel_indices"] = {
                     str(key): {
@@ -505,7 +517,10 @@ def stage_capture(args):
                 if encoder is not None:
                     captured["generation_encoder_hidden_states"] = encoder.detach().cpu()
         with trace_scope("first_step", args.trace_stage, report):
-            return original_inner(*call_args, **call_kwargs)
+            result = original_inner(*call_args, **call_kwargs)
+        if capture_first_inner:
+            captured["inner_output"] = result[0] if isinstance(result, tuple) else result
+        return result
 
     if args.trace_stage or args.capture_cache:
         pipe.unet.unet.forward = inner_forward
@@ -602,6 +617,10 @@ def stage_capture(args):
     if "generation_encoder_hidden_states" in captured:
         encoder = captured["generation_encoder_hidden_states"]
         cache_summary["generation_encoder_shape"] = list(encoder.shape)
+    if "inner_sample" in captured:
+        cache_summary["inner_sample_shape"] = list(captured["inner_sample"].shape)
+        cache_summary["inner_output_shape"] = list(captured["inner_output"].shape)
+        cache_summary["inner_dino_shape"] = list(captured["inner_dino_hidden_states"].shape)
     if cache_summary:
         report["cache_contract"] = cache_summary
 

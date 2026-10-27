@@ -260,8 +260,9 @@ def load_weights_from_pytorch(model: HunyuanInnerUNet, ckpt_path: str,
 class MLXDispatchUNet(torch.nn.Module):
     """Drop-in replacement for inner UNet that dispatches gen passes to MLX.
 
-    Step 1: PyTorch (builds caches in outer UNet).
-    Steps 2-15: MLX (5x faster SDPA on Metal).
+    Default: Step 1 PyTorch, steps 2-15 MLX. With the explicit
+    HUNYUAN_MLX_FIRST_STEP=1 opt-in, the outer Torch cache is consumed and
+    step 1 also runs on MLX.
     """
 
     def __init__(self, original_unet, mlx_model: HunyuanInnerUNet, use_fp32: bool = False):
@@ -289,9 +290,13 @@ class MLXDispatchUNet(torch.nn.Module):
 
         self._gen_call_count += 1
 
-        # First gen pass — PyTorch (populates caches in outer UNet)
+        # First gen pass — outer UNet already populated the request cache.
         if self._gen_call_count == 1:
             self._cache_constant_inputs(encoder_hidden_states, kwargs)
+            if os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1":
+                if not self._cached_mlx.get("condition_embed_dict"):
+                    raise RuntimeError("HUNYUAN_MLX_FIRST_STEP requires outer reference cache")
+                return self._mlx_forward(sample, timestep)
             return self._original(sample, timestep, encoder_hidden_states, *args, **kwargs)
 
         # Steps 2-15 — MLX
@@ -620,6 +625,9 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
     outer_unet.unet = dispatch
 
     print(f"  [MLX] Inner UNet replaced with MLX dispatch wrapper")
-    print(f"  [MLX] Step 1: PyTorch MPS, Steps 2+: MLX Metal")
+    if os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1":
+        print(f"  [MLX] Steps 1-15: MLX Metal (opt-in first-step mode)")
+    else:
+        print(f"  [MLX] Step 1: PyTorch MPS, Steps 2+: MLX Metal")
 
     return dispatch
