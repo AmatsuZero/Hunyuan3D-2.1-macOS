@@ -15,6 +15,7 @@ import shutil
 import sys
 import time
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -42,10 +43,35 @@ STAGES = ("fixtures", "conditions", "capture", "compare")
 CONDITION_NAMES = ("dino_hidden_states", "dino_pixel_values", "ref_latents",
                    "embeds_normal", "embeds_position")
 INJECTABLE = ("dino_hidden_states", "ref_latents", "embeds_normal", "embeds_position")
+SIGNPOST_STAGES = ("dino", "vae.encode", "reference", "first_step", "all")
 
 
 class StopCapture(Exception):
     pass
+
+
+@contextmanager
+def trace_scope(label, selected, report):
+    """Bound MPS signposts to one named Torch stage, excluding model loading."""
+    if selected not in (label, "all"):
+        yield
+        return
+    torch.mps.synchronize()
+    start = {"stage": label, "event": "begin", "pid": os.getpid(), "wall_unix_s": time.time(),
+             "monotonic_s": time.perf_counter()}
+    report.setdefault("trace_markers", []).append(start)
+    print("[trace-marker] " + json.dumps(start), flush=True)
+    status = "failed"
+    try:
+        with torch.mps.profiler.profile(mode="interval,event", wait_until_completed=True):
+            yield
+            torch.mps.synchronize()
+        status = "completed"
+    finally:
+        end = {"stage": label, "event": "end", "pid": os.getpid(), "status": status,
+               "wall_unix_s": time.time(), "monotonic_s": time.perf_counter()}
+        report["trace_markers"].append(end)
+        print("[trace-marker] " + json.dumps(end), flush=True)
 
 
 def add_checkout_paths(checkout):
@@ -290,7 +316,8 @@ def stage_conditions(args):
 
     report = {"stage": "conditions", "torch": torch.__version__,
               "fallback_env": os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK"),
-              "fixtures": str(Path(args.fixtures).resolve()), "records": [], "notes": []}
+              "fixtures": str(Path(args.fixtures).resolve()), "records": [], "notes": [],
+              "trace_stage": args.trace_stage}
 
     dino = Dino_v2(args.dino_dir).to(torch.float16).to(device)
     processor = dino.dino_processor
@@ -302,7 +329,15 @@ def stage_conditions(args):
         return result
 
     dino.dino_processor = processor_call
+    original_dino_forward = dino.dino_v2.forward
+
+    def dino_forward(*pos, **kw):
+        with trace_scope("dino", args.trace_stage, report):
+            return original_dino_forward(*pos, **kw)
+
+    dino.dino_v2.forward = dino_forward
     dino_hidden_states = dino(reference)
+    dino.dino_v2.forward = original_dino_forward
     dino.dino_processor = processor
     report["records"].append(save_npy(out, "dino_hidden_states", dino_hidden_states))
     if "tensor" in pixel_values:
@@ -314,7 +349,8 @@ def stage_conditions(args):
     scaling_factor = vae.config.scaling_factor
 
     def encode(tensor, seed):
-        posterior = vae.encode(tensor).latent_dist
+        with trace_scope("vae.encode", args.trace_stage, report):
+            posterior = vae.encode(tensor).latent_dist
         return fixed_posterior(posterior, seed)
 
     # Reference image path, matching HunyuanPaintPipeline.__call__.
@@ -360,7 +396,7 @@ def stage_capture(args):
               "stop_after": args.stop_after, "guidance_scale": args.guidance_scale,
               "reference_scale": args.reference_scale, "mva_scale": args.mva_scale,
               "cameras": cameras,
-              "records": [], "notes": []}
+              "records": [], "notes": [], "trace_stage": args.trace_stage}
 
     pipe = HunyuanPaintPipeline.from_pretrained(args.model_dir, torch_dtype=torch.float16)
     report["runtime_sources"] = runtime_sources(pipe, args.model_dir)
@@ -432,13 +468,24 @@ def stage_capture(args):
     original_dual = pipe.unet.unet_dual.forward
 
     def dual_forward(*call_args, **call_kwargs):
-        result = original_dual(*call_args, **call_kwargs)
+        with trace_scope("reference", args.trace_stage, report):
+            result = original_dual(*call_args, **call_kwargs)
         captured["reference_write"] = result[0] if isinstance(result, tuple) else result
+        if args.trace_stage == "reference":
+            raise StopCapture("reference trace completed")
         return result
 
     pipe.unet.unet_dual.forward = dual_forward
 
     original_unet = pipe.unet.forward
+    original_inner = pipe.unet.unet.forward
+
+    def inner_forward(*call_args, **call_kwargs):
+        with trace_scope("first_step", args.trace_stage, report):
+            return original_inner(*call_args, **call_kwargs)
+
+    if args.trace_stage:
+        pipe.unet.unet.forward = inner_forward
 
     def unet_forward(*call_args, **call_kwargs):
         result = original_unet(*call_args, **call_kwargs)
@@ -478,6 +525,13 @@ def stage_capture(args):
         dino = Dino_v2(args.dino_dir).to(torch.float16).to(device)
         kwargs["dino_hidden_states"] = dino(reference)
 
+    if args.wait_for_file:
+        gate = Path(args.wait_for_file)
+        print(json.dumps({"wait_for_file": str(gate), "pid": os.getpid()}), flush=True)
+        while not gate.exists():
+            time.sleep(0.1)
+        print(json.dumps({"wait_released": str(gate)}), flush=True)
+
     started = time.perf_counter()
     result = None
     with warnings.catch_warnings(record=True) as caught:
@@ -486,7 +540,8 @@ def stage_capture(args):
             result = pipe([reference], prompt="high quality", num_inference_steps=args.steps, sync_condition=None,
                           guidance_scale=args.guidance_scale, reference_scale=args.reference_scale, **kwargs)
         except StopCapture:
-            report["notes"].append("stopped after the requested step limit")
+            report["notes"].append("stopped after the selected trace stage" if args.trace_stage == "reference"
+                                   else "stopped after the requested step limit")
         report["elapsed_s"] = time.perf_counter() - started
     report["warnings"] = [str(item.message) for item in caught][:200]
 
@@ -553,10 +608,25 @@ def main():
     parser.add_argument("--mlx-cache-limit-mib", type=int, default=None,
                         help="set MLX idle cache limit for capture diagnostics")
     parser.add_argument("--fallback", choices=("0", "1"), default="0")
+    parser.add_argument("--trace-stage", choices=SIGNPOST_STAGES,
+                        help="bound MPS signposts to one Torch stage for Metal trace correlation")
+    parser.add_argument("--wait-for-file", type=Path,
+                        help="wait after model setup until this file exists (attach tracing)")
     parser.add_argument("--left", type=Path)
     parser.add_argument("--right", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.wait_for_file and args.trace_stage != "first_step":
+        parser.error("--wait-for-file requires --trace-stage first_step")
+    if args.trace_stage:
+        allowed = {"conditions": ("dino", "vae.encode", "all"),
+                   "capture": ("reference", "first_step", "all")}
+        if args.trace_stage not in allowed.get(args.stage, ()):
+            parser.error("trace stage must match conditions or capture")
+        if args.fallback != "0" or os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK", "0") != "0":
+            parser.error("trace requires fallback disabled before Torch import")
+        if args.mlx or (args.stage == "capture" and args.stop_after != 1):
+            parser.error("trace capture requires Torch-only dispatch and --stop-after 1")
 
     if args.stage == "compare":
         stage_compare(args)

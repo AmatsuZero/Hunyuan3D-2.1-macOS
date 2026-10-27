@@ -98,7 +98,7 @@ The same bounded operator probe was run against the preserved old environment wi
 
 The targeted/full unit suite passed 19 tests, including existing shape/mesh tests, checkout isolation, MPS availability/CPU-placement rejection, direct VAE output inspection, missing-stage rejection, overwrite protection, immediate failed-event persistence and cache-argument validation. Python compilation and `git diff --check` passed. Native reviewer dispatch failed with 429; a separate author review was performed, with no independent review approval claimed. Minor deferred: repeated parameter metadata makes audit reports larger; these instrumented runs are not used for speed claims.
 
-Phase outcome: P0/P1 complete; P2 placement/call checks complete, GPU trace gate open; P3 bounded operator parity complete, real-size bake exception open; P4 structure passed and color failed; P5 matched performance/memory acceptance open. Stop promotion at these gates. The next bounded work is Torch-only trace collection and fixed-condition color diagnosis, followed by paired runs with identical cache policy. Keep broad MLX migration and default version changes pending.
+Phase outcome: P0/P1 complete; P2 placement/call checks and named Torch-only Metal trace coverage complete; P3 bounded operator parity complete, real-size bake exception open; P4 structure and fixed-condition color diagnosis passed with user/device acceptance open; P5 matched performance/memory acceptance open. Stop promotion at these gates. Keep broad MLX migration and default version changes pending.
 
 Experimental tooling and this report are committed on the isolated upgrade branch, without changing the default environment. The inherited runtime prerequisites (native linker path, bounded attention workspace and local MLX weight lookup) are recorded separately from newly authored audit changes. The unrelated root `torchvision_fix.py` modification is excluded; the verified entry uses `hy3dpaint/utils/torchvision_fix.py`. Model weights, GLBs, raw traces and machine-specific evidence remain external artifacts, not Git payloads. No default-switch, quality, complete GPU-trace or stable-speed acceptance is implied by committing this checkpoint.
 
@@ -117,3 +117,19 @@ Run 07 completed with exit 0 in 226.793 s (load 21.498 s, inference 205.282 s). 
 **Color still FAIL:** visual inspection of the raw front multiview shows red H/Y/D. Replaying old initial noise alone did not restore the required sign colors. The run-06/run-07 front images differ (maximum channel delta 202, mean absolute delta 5.050 on 0–255 RGB); thus the intervention affects the image but does not correct this failure. No claim that randomness is irrelevant, or that a Torch kernel is the root cause, follows from this test. Next isolate conditioning/reference-network tensors and the first denoising step using fixed inputs before launching more full runs.
 
 Run 07 GLB verification passed: 24,087 UV-split vertices, 40,000 faces, finite geometry/UV, one PBR material and two decodable embedded 2048×2048 textures. SHA256 is `ae28f0603b2423f5def597da7b9db3b77cdc2a6c0816fe7980eee14a5910675e`. All five protected assets and the original checkout's full porcelain status remain unchanged. Evidence: `candidate-07-glb-verification.json`, `candidate-audit-07-old-noise/audit.json`, `initial-latents.npy` and saved intermediates. The complete unit suite passed 22 tests; Python compilation and diff whitespace checks passed. Quality, correlated GPU trace and matched performance/memory acceptance remain open.
+
+## P2 named Torch-only Metal trace closure
+
+On 2026-10-27, five bounded Torch/MPS windows were recorded with `PYTORCH_ENABLE_MPS_FALLBACK=0`, correlated to the launched target PID, and fail-closed on incomplete recorder windows. The raw traces and exported tables remain outside Git under `/Users/daubert/Github/hy3d-upgrade-evidence/20261027/`; only the stage handoff records their paths.
+
+| Window | Target evidence | PyTorch signposts | Metal GPU intervals | Fallback signposts | Result |
+| --- | --- | ---: | ---: | ---: | --- |
+| DINO + VAE encode (three calls) | `p2-conditions-trace-01` | 2,571 total | 1,314 total | 0 | pass |
+| VAE decode | `p2-vae-decode-trace-01` | 441 | 296 | 0 | pass |
+| RealESRGAN forward | `p2-superres-trace-01` | 2,445 | 1,055 | 0 | pass |
+| Reference UNet | `p2-reference-trace-02` | 2,138 | 784 | 0 | pass |
+| First-step outer/inner UNet | `p2-first-step-trace-03` | 5,961 | 9,251 | 0 | pass |
+
+Every accepted window has target exit status 0, matching marker and target PID, and marker begin/end fully inside the trace start/end range. The first-step attempt `p2-first-step-trace-02` is retained as a negative result because the recorder ended five seconds before the marker end; the new summary tool rejects that case. The trace proves GPU execution in these named windows and does not prove that explicit CPU preprocessing, native mesh operations, or framework bridges elsewhere in the pipeline are absent.
+
+The repository suite passed 30/30 under normal Metal permissions after this work. A sandboxed run without Metal access cannot import MLX; that environment failure is not used as acceptance evidence. Independent reviewer dispatch again returned 429, so no independent review approval is claimed.
