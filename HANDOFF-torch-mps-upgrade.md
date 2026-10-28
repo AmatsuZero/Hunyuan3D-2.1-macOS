@@ -210,9 +210,15 @@ opt-in、cache consumer dtype 合同及完整 15 步/reset 验收；正式 dispa
 独立 reference fp32 opt-in 已实现：`HUNYUAN_MLX_REFERENCE_FP32=1` 只提升
 `unet_dual` reference，native cache 在 consumer 边界回到 generation fp16。两组超限
 输入的集成 replay 均通过（最大 cache `0.006399/0.006531`），reset 合同通过；详见
-`HANDOFF-r3-reference-fp32-consumer-20261028.md`。完整 15 步图像和性能验收仍开放。
+`HANDOFF-r3-reference-fp32-consumer-20261028.md`。后续真实 resident 输入发现遮挡
+512px 在 reference fp32 下仍失败：cache 最大 NRMSE `0.014330` > `0.01`，write
+`0.026173`，逐步 latent 最大 NRMSE `0.012732`，最大像素差 `79/255`。本轮不注入
+预生成非 reference 条件，使用固定 posterior noise，与此前 coverage replay 的输入
+合同不同；旧 PASS 不覆盖该新输入。详见 `HANDOFF-r3-reference-fp32-resident-20261028.md`。
+下一优先级是冻结本轮失败张量/哈希、比较新旧 sample 并逐层定位，保持原门槛及默认 Torch
+reference 路径，暂停扩大 outer condition/VAE 边界。
 
-当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 三轮旧/新版栈级性能/内存样本完成，但 Torch-only 归因、安全内存与默认切换仍未通过；R1 inner UNet 权重 bundle 的 Torch-free strict load 完成；R2 RealESRGAN 独立试点因性能回退未切默认；R3 inner UNet bundle、独立 UniPC scheduler replay、DINO projector 对照、外层条件权重 bundle、真实 reference/cache 合同、opt-in first-step 15 步运行、CFG+UniPC replay 和 opt-in resident loop 切片通过，完整 R3 迁移未完成；DINO projector consumer、position indices producer/consumer、opt-in MLX reference forward、首版门槛及独立 reference fp32/cache dtype 切片已通过当前 reference replay，但完整 15 步图像、性能和默认切换仍开放。
+当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 三轮旧/新版栈级性能/内存样本完成，但 Torch-only 归因、安全内存与默认切换仍未通过；R1 inner UNet 权重 bundle 的 Torch-free strict load 完成；R2 RealESRGAN 独立试点因性能回退未切默认；R3 inner UNet bundle、独立 UniPC scheduler replay、DINO projector 对照、外层条件权重 bundle、真实 reference/cache 合同、opt-in first-step 15 步运行、CFG+UniPC replay 和 opt-in resident loop 切片通过，完整 R3 迁移未完成；DINO projector consumer、position indices producer/consumer、opt-in MLX reference forward 及独立 reference fp32/cache dtype 切片已通过先前精确输入 replay，但本轮真实 resident 遮挡输入的 reference/15 步质量门槛失败，暂停扩大边界；性能、安全内存和默认切换仍开放。
 
 ## 9. 可复制验证命令
 

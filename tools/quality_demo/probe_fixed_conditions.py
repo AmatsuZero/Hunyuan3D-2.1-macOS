@@ -387,6 +387,8 @@ def stage_conditions(args):
 
 
 def stage_capture(args):
+    import resource
+    import psutil
     from diffusers import UniPCMultistepScheduler
     from hunyuanpaintpbr.pipeline import HunyuanPaintPipeline
     from hunyuanpaintpbr.unet.modules import Dino_v2
@@ -417,6 +419,25 @@ def stage_capture(args):
             "trace_dir": os.environ.get("HUNYUAN_MLX_RESIDENT_TRACE_DIR"),
         }
 
+    def memory_snapshot():
+        # These overlapping allocator/process counters must never be added.
+        snapshot = {
+            "rss_bytes": psutil.Process().memory_info().rss,
+            "process_peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss *
+                                      (1 if sys.platform == "darwin" else 1024),
+            "system_available_bytes": psutil.virtual_memory().available,
+            "system_swap_used_bytes": psutil.swap_memory().used,
+            "mps_allocated_bytes": torch.mps.current_allocated_memory(),
+            "mps_driver_bytes": torch.mps.driver_allocated_memory(),
+        }
+        if args.mlx:
+            import mlx.core as mx
+            snapshot.update(mlx_active_bytes=mx.get_active_memory(),
+                            mlx_cache_bytes=mx.get_cache_memory(),
+                            mlx_peak_bytes=mx.get_peak_memory())
+        return snapshot
+
+    load_started = time.perf_counter()
     pipe = HunyuanPaintPipeline.from_pretrained(args.model_dir, torch_dtype=torch.float16)
     report["runtime_sources"] = runtime_sources(pipe, args.model_dir)
     mismatches = [name for name in ("outer_unet", "reference_processor")
@@ -427,6 +448,8 @@ def stage_capture(args):
     pipe.set_progress_bar_config(disable=True)
     pipe.eval()
     pipe = pipe.to(device)
+    torch.mps.synchronize()
+    report["torch_load_to_mps_s"] = time.perf_counter() - load_started
     if args.mlx:
         import mlx.core as mx
         from mlx_utils import setup_mlx_dispatch
@@ -438,9 +461,25 @@ def stage_capture(args):
                 "previous_limit_bytes": previous_cache_limit,
             }
 
+        dispatch_started = time.perf_counter()
         mlx_dispatch = setup_mlx_dispatch(pipe)
+        report["mlx_dispatch_load_s"] = time.perf_counter() - dispatch_started
         if mlx_dispatch is None:
             raise RuntimeError("requested MLX dispatch but setup_mlx_dispatch returned None")
+        original_reset = mlx_dispatch.reset
+
+        def reset_recorded():
+            previous_count = mlx_dispatch._gen_call_count
+            original_reset()
+            report.setdefault("dispatch_resets", []).append({
+                "previous_gen_count": previous_count,
+                "gen_count": mlx_dispatch._gen_call_count,
+                "cached_mlx_cleared": mlx_dispatch._cached_mlx is None,
+                "pending_reference_cleared": mlx_dispatch._pending_reference_cache is None,
+                "producer_cache_cleared": mlx_dispatch._reference_cache_producer.cache is None,
+            })
+
+        mlx_dispatch.reset = reset_recorded
         report["mlx_dispatch"] = {
             "enabled": True,
             "fp32": bool(getattr(mlx_dispatch, "_use_fp32", False)),
@@ -460,6 +499,15 @@ def stage_capture(args):
                 "outer_dino_projector_source_sha256": dino_projector.source_sha256,
                 "outer_dino_projector_config_sha256": dino_projector.config_sha256,
             })
+
+    report["memory_after_load"] = memory_snapshot()
+    report["measurement_notes"] = {
+        "reference_forward_s": "wrapper elapsed through final MPS synchronization; may include earlier queued MPS work",
+        "memory": "allocator/process counters overlap; MPS values are snapshots, not peaks; MLX inference peak resets after load",
+        "process_peak_rss_bytes": "lifetime high-water RSS, normalized from macOS bytes or Linux KiB",
+    }
+    if args.mlx:
+        mx.reset_peak_memory()
 
     injected = {}
     if args.inject:
@@ -516,7 +564,10 @@ def stage_capture(args):
                     _to_numpy(encoder)
                 )
         with trace_scope("reference", args.trace_stage, report):
+            reference_started = time.perf_counter()
             result = original_dual(*call_args, **call_kwargs)
+            torch.mps.synchronize()
+            report.setdefault("reference_forward_s", []).append(time.perf_counter() - reference_started)
         captured["reference_write"] = result[0] if isinstance(result, tuple) else result
         if args.capture_cache:
             cross = call_kwargs.get("cross_attention_kwargs") or {}
@@ -631,6 +682,7 @@ def stage_capture(args):
             report["notes"].append("stopped after the selected trace stage" if args.trace_stage == "reference"
                                    else "stopped after the requested step limit")
         report["elapsed_s"] = time.perf_counter() - started
+    report["memory_after_first_request"] = memory_snapshot()
     report["warnings"] = [str(item.message) for item in caught][:200]
 
     if args.repeat_request:
@@ -661,6 +713,7 @@ def stage_capture(args):
                                           and all(np.array_equal(value, second_reference[name].numpy())
                                                   for name, value in first_reference.items())),
         }
+        report["memory_after_repeat"] = memory_snapshot()
 
     if result is not None and args.stop_after <= 0:
         images = result.images if hasattr(result, "images") else result
