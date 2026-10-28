@@ -1,10 +1,10 @@
 # Hunyuan3D macOS：Torch/MPS 升级与颜色诊断交接
 
-更新日期：2026-10-27。本文是该分支继续工作的唯一权威交接；历史失败与当前修复状态在下文明确区分。
+更新日期：2026-10-29。本文是该分支继续工作的唯一权威交接；历史失败与当前修复状态在下文明确区分。
 
 ## 1. 接手结论
 
-- 当前阶段是 **隔离验证 Torch 2.5.1 → 2.14.1**，随后按 roadmap 逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；P3 真实 bake CPU 例外已完成数值对照并移除旧 workaround（见 §12）；P5 已完成三轮串行旧/新版 benchmark 样本（见 §13）。尚未切换默认环境，也没有开始全面 MLX 迁移。
+- 当前阶段在隔离验证 Torch 2.5.1 → 2.14.1 的基础上逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；P3 真实 bake CPU 例外已完成数值对照并移除旧 workaround（见 §12）；P5 已完成三轮串行旧/新版 benchmark 样本（见 §13）。R3 的 DINO projector、position indices、reference cache/forward、first-step 和 resident loop 已有 opt-in 实现与对照（见 §14–15），但默认 Torch reference、默认 Winograd、默认 MLX dispatch 和默认环境未切换；occluded512 图像最大差仍超探索性门槛。
 - 新版已完成关闭自动 fallback 的完整上色；所审计神经网络的参数、计算输入/输出均在 MPS，MLX 部分在 Metal。P2 命名 Torch-only 窗口已有目标 PID 的 Metal trace；不能据此宣称全流水线都在 GPU：显式 CPU 路径仍存在，完整 pipeline 的 trace 验收仍未完成。
 - 颜色诊断已闭环到固定条件及本地完整 GLB 复验：旧版（Torch 2.5.1）全黑 HY3D 来自 MPS bicubic/DINO 错误；候选版早期 hybrid 的 H/Y/D 染红来自 MLX reference attention 材质 V head layout；后续重复漂移来自 MLX loader 漏载 `up_block_0` upsampler 权重。根因均已修复，修复后固定条件 15 步 hybrid 及完整 GLB 的 Blender 四视图恢复黑 H/Y/D、红 3。用户设备/独立 3D 查看仍未验收。
 - 相同 seed 在两个 Torch 版本下产生不同实际噪声，旧的同 seed 对比不充分。把旧版实际初始噪声注入修复前候选 hybrid 后 H/Y/D 仍红——**初始噪声不是染红根因（负结果保留）**；后续纯 Torch/hybrid 固定条件对照才把分叉定位到 MLX reference attention。
@@ -455,3 +455,17 @@ P2 trace gate 已完成。五个真实尺寸 Torch/MPS 窗口在候选 Torch 2.1
 
 运行前 queue 均为空，只有既有 ComfyUI 服务；输出未写入仓库或交付 GLB。
 默认 Torch reference、默认 Winograd 和默认 MLX dispatch 未切换。
+
+## 15. R3 occluded512 逐步离线诊断（2026-10-29）
+
+阶段证据见 [`HANDOFF-r3-occluded512-late-step-20261029.md`](HANDOFF-r3-occluded512-late-step-20261029.md)。
+仅对已归档 Torch reference 与 Winograd-disabled MLX opt-in resident trace 做 CPU
+离线对照，无新 GPU 推理或模型代码改动。15 步 `noise_pred` NRMSE 从
+`0.00121164`（step 0）增至 `0.01022438`（step 14），latent 从 `0.00025900`
+增至 `0.00644233`；step 10–14 的 noise 最大差多在空间 `(y≈43,x≈35–36)`。
+明细 JSON（含源文件 SHA256）归档于
+`/Users/daubert/Github/hy3d-upgrade-evidence/20261029/r3-reference-winograd-optin-20261029/occluded512-late-step-diagnostic.json`，
+SHA256 `26bd4518e8bb208d109ceea8f947090ef5a8a2cca00b7de39f493d05920fe38c`。
+该证据只说明首步已有差异且后段累积，尚未证明具体算子根因，也未建立
+latent 坐标到 `generated_5/11.png` 局部超阈值像素的因果映射。occluded512
+的 `43/255` 探索性最大差仍未过 `32/255` 门槛，默认路径保持不变。
