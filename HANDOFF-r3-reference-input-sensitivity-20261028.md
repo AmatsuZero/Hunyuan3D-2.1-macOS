@@ -20,6 +20,16 @@
   sample NRMSE `0.0000270226`（49152 元素中 4503 个变化，最大绝对差
   `0.0009765625`）。旧/新 Torch cache 最大 NRMSE `0.0047341793`，最大层为
   `up_2_2_0`。微小 sample 改变会在上采样路径放大，具体算子仍未定位。
+- 误差空间分布也一致地指向遮挡中心：新输入 MLX/Torch 的 `up_2_0_0` 最大误差
+  位于 token `(13,16)` 邻域，`up_2_1_0`、`up_2_2_0` 和 `up_3_0_0` 保持同一
+  中心热点；旧/新 Torch A/B 在相同位置有对应热点。现有证据支持输入敏感性和
+  上采样路径放大，不能单独归因于一个全局权重映射错误。
+- 两套 reference writer 都缓存 `norm1` 的输入归一化结果：Torch 动态模块的
+  `Basic2p5DTransformerBlock` 在 self-attention 后写入此前算出的
+  `norm_hidden_states`；MLX `_reference_forward` 写入此前算出的 `norm_hs`。
+  因此 `up_2_0_0` cache 的差异在该层 self-attention **之前**已存在。下一 trace
+  优先量测 `up_block_1` 末端及 upsample、`up_block_2` 首个 ResNet、
+  Transformer2D 的 norm/proj 和该层 norm1，而非先改 `up_2_0_0` attention。
 
 ## 证据
 
