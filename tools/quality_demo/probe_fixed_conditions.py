@@ -147,9 +147,18 @@ def runtime_sources(pipe, model_dir=None):
 
 
 def save_npy(directory, name, value):
-    array = value.detach().cpu().numpy() if isinstance(value, torch.Tensor) else np.asarray(value)
+    array = _to_numpy(value)
     np.save(Path(directory) / (name + ".npy"), array)
     return {"name": name, "shape": list(array.shape), "dtype": str(array.dtype)}
+
+
+def _to_numpy(value):
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    if type(value).__module__.startswith("mlx.core"):
+        import mlx.core as mx
+        mx.eval(value)
+    return np.asarray(value)
 
 
 def load_npy(directory, name):
@@ -401,6 +410,7 @@ def stage_capture(args):
         report["mlx_resident_loop"] = {
             "enabled": True,
             "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
+            "position_indices_mlx": os.environ.get("HUNYUAN_MLX_POSITION_INDICES") == "1",
             "trace_dir": os.environ.get("HUNYUAN_MLX_RESIDENT_TRACE_DIR"),
         }
 
@@ -511,17 +521,19 @@ def stage_capture(args):
         if capture_first_inner:
             cross = call_kwargs.get("cross_attention_kwargs") or {}
             if cross.get("mode") == "r":
-                captured["inner_sample"] = call_args[0].detach().cpu()
-                captured["inner_timestep"] = torch.as_tensor(call_args[1]).detach().cpu()
+                captured["inner_sample"] = torch.as_tensor(_to_numpy(call_args[0]))
+                captured["inner_timestep"] = torch.as_tensor(_to_numpy(call_args[1]))
                 if cross.get("dino_hidden_states") is not None:
-                    captured["inner_dino_hidden_states"] = cross["dino_hidden_states"].detach().cpu()
+                    captured["inner_dino_hidden_states"] = torch.as_tensor(
+                        _to_numpy(cross["dino_hidden_states"])
+                    )
                 captured["inner_num_in_batch"] = int(cross.get("num_in_batch", 6))
                 captured["inner_ref_scale"] = cross.get("ref_scale", 1.0)
                 captured["inner_mva_scale"] = cross.get("mva_scale", 1.0)
                 positions = cross.get("position_voxel_indices") or {}
                 captured["position_voxel_indices"] = {
                     str(key): {
-                        "voxel_indices": value["voxel_indices"].detach().cpu(),
+                        "voxel_indices": torch.as_tensor(_to_numpy(value["voxel_indices"])),
                         "voxel_resolution": int(value["voxel_resolution"]),
                     }
                     for key, value in positions.items()
@@ -530,7 +542,9 @@ def stage_capture(args):
                 if encoder is None and len(call_args) > 2:
                     encoder = call_args[2]
                 if encoder is not None:
-                    captured["generation_encoder_hidden_states"] = encoder.detach().cpu()
+                    captured["generation_encoder_hidden_states"] = torch.as_tensor(
+                        _to_numpy(encoder)
+                    )
         with trace_scope("first_step", args.trace_stage, report):
             result = original_inner(*call_args, **call_kwargs)
         if capture_first_inner:

@@ -37,6 +37,25 @@ def _pt_to_mx(tensor: torch.Tensor) -> mx.array:
     return mx.array(tensor.cpu().numpy())
 
 
+def make_mlx_position_cache(position_maps: torch.Tensor, latent_resolution: int) -> dict:
+    """Compute the four request-local position caches directly in MLX."""
+    if not isinstance(position_maps, torch.Tensor):
+        raise TypeError("position_maps must be a Torch tensor at the outer boundary")
+    if latent_resolution < 8 or latent_resolution % 8:
+        raise ValueError("latent resolution must be divisible by eight")
+    try:
+        from .mlx_position_indices import calc_multires_voxel_idxs_mlx
+    except ImportError:
+        from mlx_position_indices import calc_multires_voxel_idxs_mlx
+    grid_resolutions = [latent_resolution // scale for scale in (1, 2, 4, 8)]
+    voxel_resolutions = [latent_resolution * scale for scale in (8, 4, 2, 1)]
+    cache = calc_multires_voxel_idxs_mlx(
+        _pt_to_mx(position_maps.detach()), grid_resolutions, voxel_resolutions
+    )
+    mx.eval([entry["voxel_indices"] for entry in cache.values()])
+    return cache
+
+
 def _conv_weight_pt_to_mlx(w: torch.Tensor) -> mx.array:
     """Convert Conv2d weight from PyTorch OIHW to MLX OHWI."""
     return mx.array(w.cpu().permute(0, 2, 3, 1).numpy())
@@ -464,8 +483,10 @@ class MLXDispatchUNet(torch.nn.Module):
         pvox = cross_attn.get("position_voxel_indices", {})
         cached["position_voxel_indices"] = {}
         for key, entry in pvox.items():
+            voxel_indices = entry["voxel_indices"]
             cached["position_voxel_indices"][key] = {
-                "voxel_indices": _pt_to_mx(entry["voxel_indices"]),
+                "voxel_indices": voxel_indices if isinstance(voxel_indices, mx.array)
+                                 else _pt_to_mx(voxel_indices),
                 "voxel_resolution": entry["voxel_resolution"],
             }
 

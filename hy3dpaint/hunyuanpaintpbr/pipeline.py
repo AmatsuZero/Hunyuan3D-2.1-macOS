@@ -635,6 +635,9 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
         resident_mlx = os.environ.get("HUNYUAN_MLX_RESIDENT_LOOP") == "1"
+        mlx_position_indices = os.environ.get("HUNYUAN_MLX_POSITION_INDICES") == "1"
+        if mlx_position_indices and not resident_mlx:
+            raise RuntimeError("MLX position indices require the MLX resident loop")
         if resident_mlx:
             dispatch = getattr(self.unet, "unet", None)
             if (self.device.type != "mps" or dispatch is None or
@@ -654,6 +657,14 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
             # Direct pipeline callers do not pass through textureGenPipeline's
             # per-request reset. Start with fresh reference and position data.
             dispatch.reset()
+            if mlx_position_indices:
+                if "position_maps" not in kwargs:
+                    raise ValueError("MLX position indices require position maps")
+                from mlx_utils import make_mlx_position_cache
+
+                kwargs["cache"]["position_voxel_indices"] = make_mlx_position_cache(
+                    kwargs["position_maps"], latents.shape[-1]
+                )
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:

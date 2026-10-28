@@ -237,6 +237,9 @@ MLX latent、CFG、UniPC 和 inner UNet 直接连接，并完成真实 15 步固
 outer DINO projector 已通过 opt-in bundle-backed MLX adapter 接入并完成单步和
 15 步原图对照（见 `HANDOFF-r3-dino-projector-consumer-20261028.md`）；outer Torch
 接口仍需两次 NumPy 同步，不能把该切片写成 Torch-free outer 条件生产。
+position voxel indices 的 opt-in MLX producer/consumer 已通过四分辨率数值、首步
+输出及 12 张原图逐元素对照（见 `HANDOFF-r3-position-indices-20261028.md`）；
+dynamic reference-write 和外层条件 embedding 仍使用 Torch。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。
 当前已验收代码、Torch 升级风险和颜色缺陷分别见同目录的
