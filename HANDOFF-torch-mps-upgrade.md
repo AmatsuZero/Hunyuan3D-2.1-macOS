@@ -247,6 +247,11 @@ projection 重放与 Torch 捕获几乎逐元素一致，MLX 捕获差异仅 `0.
 最大 cache `0.0130166` 仍超过 `0.01`，write `0.0257892` 在 `0.03` 内。
 详见 `HANDOFF-r3-reference-epsilon-replay-20261028.md`；默认 reference 不切换。
 
+随后对冻结 `up_1.1` Transformer2D GroupNorm 输入做 32 组逐组 float64 统计：
+最小组标准差 `2.95917`，没有接近常数的组；此处合成低方差 GroupNorm
+异常尚不能解释真实误差。详见 `HANDOFF-r3-reference-group-variance-20261028.md`。
+下一步从 `up_1.1.resnet` 前继续追踪 concat、ResNet 内部与主干/skip。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。
