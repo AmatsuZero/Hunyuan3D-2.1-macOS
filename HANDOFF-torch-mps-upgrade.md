@@ -280,6 +280,12 @@ ResNet 与 attention。
 `HANDOFF-r3-reference-conv1-split-probe-20261028.md`。单点改法未接入默认，
 下一步先按卷积形状/层位隔离其他数值因素。
 
+随后将 65 个高通道 Conv2d 临时按 4 块输入通道拆分并完成冻结 reference replay：
+cache 最大 NRMSE `0.0092018`、reference write `0.0158142`，均通过原
+`0.01/0.03` 门槛；验证器 exit 0。该实现仍是临时诊断，未接入默认路径，尚未
+覆盖其他输入、完整 15 步或性能。详见 `HANDOFF-r3-reference-split-all-conv-20261028.md`，
+下一步收窄必要卷积集合并评估性能成本。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。
