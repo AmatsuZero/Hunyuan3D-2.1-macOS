@@ -223,8 +223,12 @@ reference 路径，暂停扩大 outer condition/VAE 边界。
 本轮追加 reference 输入敏感性诊断见
 `HANDOFF-r3-reference-input-sensitivity-20261028.md`：遮挡失败的误差首次在
 `up_2_0_0` 明显越门槛；正式 fp32 输入/cache fp16 与离线参数 fp32 合同在同一输入下
-结果几乎相同，输入 dtype 不是主因。旧 coverage 精确输入仍通过，下一步需逐层 trace
-定位上采样路径中的首个算子差异。默认 MLX reference 路径仍不切换。
+结果几乎相同，输入 dtype 不是主因。旧 coverage 精确输入仍通过。
+
+逐层 trace 已将明显放大追到 `up_1_1_0` 的 FF/GEGLU；同输入、同权重的孤立 FF
+CPU Torch/MLX 对照差异较小，支持上游误差被放大，首个来源仍待定位。Torch fp32
+对照也未消除误差。证据和下一步见 `HANDOFF-r3-reference-up2-stage-trace-20261028.md`；
+保持默认 Torch reference 与 cache `0.01` / write `0.03` 门槛。
 
 ## 9. 可复制验证命令
 

@@ -449,26 +449,51 @@ class Basic2p5DTransformerBlock(nn.Module):
             raise ValueError("reference batch must divide evenly by num_in_batch")
         batch_size //= num_in_batch
         norm_hs = self.norm1(hidden_states)
+        debug_trace = getattr(self, "_reference_debug_trace", None)
+        if debug_trace is not None:
+            debug_trace(f"{self.layer_name}.norm1", norm_hs)
         q = self.attn1_to_q(norm_hs)
         k = self.attn1_to_k(norm_hs)
         v = self.attn1_to_v(norm_hs)
         attention_output = self._sdpa(q, k, v, hidden_states.shape[0])
-        hidden_states = self.attn1_to_out(attention_output) + hidden_states
+        self_attention_output = self.attn1_to_out(attention_output)
+        if debug_trace is not None:
+            debug_trace(f"{self.layer_name}.attn1", self_attention_output)
+        hidden_states = self_attention_output + hidden_states
         reference_cache[self.layer_name] = norm_hs.reshape(
             batch_size, num_in_batch * norm_hs.shape[1], self.dim
         )
 
         norm_hs2 = self.norm2(hidden_states)
+        if debug_trace is not None:
+            debug_trace(f"{self.layer_name}.norm2", norm_hs2)
         q = self.attn2_to_q(norm_hs2)
         k = self.attn2_to_k(encoder_hidden_states)
         v = self.attn2_to_v(encoder_hidden_states)
-        hidden_states = self.attn2_to_out(
+        text_attention_output = self.attn2_to_out(
             self._sdpa(q, k, v, hidden_states.shape[0])
-        ) + hidden_states
+        )
+        if debug_trace is not None:
+            debug_trace(f"{self.layer_name}.attn2", text_attention_output)
+        hidden_states = text_attention_output + hidden_states
 
-        ff = self.ff_proj(self.norm3(hidden_states))
-        ff_val, ff_gate = mx.split(ff, 2, axis=-1)
-        return self.ff_out(ff_val * nn.gelu(ff_gate)) + hidden_states
+        norm_hs3 = self.norm3(hidden_states)
+        if debug_trace is not None:
+            debug_trace(f"{self.layer_name}.norm3", norm_hs3)
+        ff_projected = self.ff_proj(norm_hs3)
+        if debug_trace is not None:
+            debug_trace(f"{self.layer_name}.ff_proj", ff_projected)
+        ff_val, ff_gate = mx.split(ff_projected, 2, axis=-1)
+        ff_geglu = ff_val * nn.gelu(ff_gate)
+        if debug_trace is not None:
+            debug_trace(f"{self.layer_name}.ff_geglu", ff_geglu)
+        ff_output = self.ff_out(ff_geglu)
+        if debug_trace is not None:
+            debug_trace(f"{self.layer_name}.ff", ff_output)
+        hidden_states = ff_output + hidden_states
+        if debug_trace is not None:
+            debug_trace(f"{self.layer_name}.output", hidden_states)
+        return hidden_states
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -492,8 +517,18 @@ class Transformer2D(nn.Module):
                  mode=None, reference_cache=None):
         input_x = x
         B, H, W, C = x.shape
+        debug_trace = getattr(self, "_reference_debug_trace", None)
+        trace_prefix = None
+        if debug_trace is not None and self.transformer_blocks:
+            trace_prefix = self.transformer_blocks[0].layer_name.rsplit("_", 1)[0]
+        if debug_trace is not None:
+            debug_trace(f"{trace_prefix}.attn_input", x)
         x = self.norm(x).reshape(B, H * W, C)
+        if debug_trace is not None:
+            debug_trace(f"{trace_prefix}.norm", x)
         x = self.proj_in(x)
+        if debug_trace is not None:
+            debug_trace(f"{trace_prefix}.proj_in", x)
 
         for block in self.transformer_blocks:
             cond = condition_embed_dict.get(block.layer_name)
@@ -580,14 +615,26 @@ class CrossAttnUpBlock2D(nn.Module):
     def __call__(self, x, temb, encoder_hs, num_in_batch, condition_embed_dict,
                  dino_hs, position_voxel_indices, ref_scale, mva_scale, residuals,
                  mode=None, reference_cache=None):
-        for resnet, attn in zip(self.resnets, self.attentions):
+        debug_trace = getattr(self, "_reference_debug_trace", None)
+        for index, (resnet, attn) in enumerate(zip(self.resnets, self.attentions)):
             x = mx.concatenate([x, residuals.pop()], axis=-1)
+            if debug_trace is not None:
+                debug_trace(f"up_{self._reference_trace_index}.{index}.concat", x)
             x = resnet(x, temb)
+            if debug_trace is not None:
+                debug_trace(f"up_{self._reference_trace_index}.{index}.resnet", x)
             x = attn(x, encoder_hs, num_in_batch, condition_embed_dict,
                      dino_hs, position_voxel_indices, ref_scale, mva_scale,
                      mode=mode, reference_cache=reference_cache)
+            if debug_trace is not None:
+                debug_trace(f"up_{self._reference_trace_index}.{index}.attn", x)
         if self.has_upsample:
+            if debug_trace is not None:
+                debug_trace(f"up_{self._reference_trace_index}.upsample_input", x)
+                debug_trace(f"up_{self._reference_trace_index}.upsample_nearest", upsample_nearest(x))
             x = self.upsample(x)
+            if debug_trace is not None:
+                debug_trace(f"up_{self._reference_trace_index}.upsample", x)
         return x
 
 
@@ -605,11 +652,21 @@ class UpBlock2D(nn.Module):
         self.has_upsample = add_upsample
 
     def __call__(self, x, temb, residuals, **kwargs):
-        for resnet in self.resnets:
+        debug_trace = getattr(self, "_reference_debug_trace", None)
+        for index, resnet in enumerate(self.resnets):
             x = mx.concatenate([x, residuals.pop()], axis=-1)
+            if debug_trace is not None:
+                debug_trace(f"up_0.{index}.concat", x)
             x = resnet(x, temb)
+            if debug_trace is not None:
+                debug_trace(f"up_0.{index}.resnet", x)
         if self.has_upsample:
+            if debug_trace is not None:
+                debug_trace("up_0.upsample_input", x)
+                debug_trace("up_0.upsample_nearest", upsample_nearest(x))
             x = self.upsample(x)
+            if debug_trace is not None:
+                debug_trace("up_0.upsample", x)
         return x
 
 
@@ -768,6 +825,9 @@ class HunyuanInnerUNet(nn.Module):
 
         # Up
         x = self.up_block_0(x, temb, residuals=residuals)
+        reference_debug_trace = getattr(self, "_reference_debug_trace", None)
+        if reference_debug_trace is not None:
+            reference_debug_trace("up_0.output", x)
         x = self.up_block_1(x, temb, **attn_kwargs, residuals=residuals)
         x = self.up_block_2(x, temb, **attn_kwargs, residuals=residuals)
         x = self.up_block_3(x, temb, **attn_kwargs, residuals=residuals)
