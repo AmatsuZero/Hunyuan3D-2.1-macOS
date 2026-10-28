@@ -469,3 +469,18 @@ SHA256 `26bd4518e8bb208d109ceea8f947090ef5a8a2cca00b7de39f493d05920fe38c`。
 该证据只说明首步已有差异且后段累积，尚未证明具体算子根因，也未建立
 latent 坐标到 `generated_5/11.png` 局部超阈值像素的因果映射。occluded512
 的 `43/255` 探索性最大差仍未过 `32/255` 门槛，默认路径保持不变。
+
+## 16. R3 occluded512 视角与局部误差映射（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-view-mapping-20261029.md`](HANDOFF-r3-occluded512-view-mapping-20261029.md)。
+对归档的 12 张图与 15 步 trace 做 CPU 离线映射，确认输出按 6 视角、
+`albedo` 后 `MR` 排列，noise 的 36 batch 按三条 CFG 分支各 12 项排列。
+唯一超 `32/255` 的 image 5/11 均为 view 5（`elev=-90,azim=180`）；
+它们的超阈值图像区域与各自 final latent 的局部差粗略对应。全局 step 10–14
+最大 noise 差却主要对应 image 10 / view 4，且该图最大像素差仅 `9/255`。
+因此上一节的全局 noise 最大误差坐标不是 image 5/11 的直接归因。
+逐图证据 JSON SHA256 `b4c65694c5674ed5ac8f993cecbb04cd4ce6ab8aef6eff9cf4ffa4a6ad9198b9`，
+分支/CFG/latent 明细 SHA256
+`d7caf7ceade1af91983f6e8a450e1710da7c4f2a5649f4707f264f1e7c789e9a`，
+均在 §14 的外部证据目录。下一步聚焦 view 5 的逐步三分支、CFG 与 latent
+局部差，image 10 作为反例；仍不能切换默认路径。
