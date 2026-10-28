@@ -32,8 +32,8 @@ External archive:
 
 - `torch-reference/` and `mlx-reference/` contain `capture.json`, `local-layers.json`,
   selected local `.npy` patches, and all 12 generated images.
-- `comparison.json` SHA256:
-  `a511dc83342f363646775397748943d2aeafd48396aa60224ba7ab3f41ff8daa`
+- `comparison-boundary.json` SHA256:
+  `408cb06964d155ce60ecaa4a4ad82ab5afa969adf12aa9ee4da75365ec1bc0f4`
 - `torch-reference/local-layers.json` SHA256:
   `01ab4677f906bd731e10cc43a9671fc46f241732141e57e675d0a71d23e734bf`
 - `mlx-reference/local-layers.json` SHA256:
@@ -48,9 +48,17 @@ a performance conclusion.
 
 - The earliest selected layer, `conv_in`, already contains a local difference at
   step 3 (image 5 NRMSE `0.006109`; image 11 `0.001060`; image 10 `0.000873`).
-  The archived resident trace also shows different latents before step 3, so
-  `conv_in` combines an already different input with different convolution policy.
-  This capture cannot assign the `conv_in` difference to either factor alone.
+- The fresh captures make the boundary sharper: `initial-latents`, `inner_sample`,
+  DINO hidden states, generation text embeddings, reference sample, and reference
+  text embeddings are all exact between sides. `reference_write` is already
+  different at NRMSE `0.013201`, and the first resident `noise_pred_0` is different
+  at NRMSE `0.001212`. The 16 cached reference tensors also differ, with the largest
+  cache NRMSE `0.007406` at `up_2_2_0`. Thus the first observed divergence is in the
+  Torch reference write versus MLX reference forward/cache boundary, before the
+  later generation-side local layer differences; the step-3 `conv_in` difference
+  is downstream of that boundary.
+- This capture cannot assign the reference boundary difference to one attention or
+  convolution subkernel.
 - Differences generally grow through the down path. At step 14, image 5 reaches
   `up_3.2.attn` NRMSE `0.052962`, image 11 `0.072279`.
 - The counterexample image 10/view 4 reaches a larger step-14 `up_3.2.attn` NRMSE

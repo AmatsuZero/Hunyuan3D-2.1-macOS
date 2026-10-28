@@ -171,6 +171,28 @@ def compare(args):
         )
     if not all(image_exact.values()):
         raise ValueError(f"instrumented outputs differ from archive: {image_exact}")
+    boundary = {}
+    exact_inputs = ("initial-latents.npy", "inner_sample.npy",
+                    "inner_dino_hidden_states.npy", "generation_encoder_hidden_states.npy",
+                    "reference_sample.npy", "reference_encoder_hidden_states.npy")
+    for name in exact_inputs:
+        left = np.load(roots[0] / name, allow_pickle=False)
+        right = np.load(roots[1] / name, allow_pickle=False)
+        if not np.array_equal(left, right):
+            raise ValueError(f"boundary input differs: {name}")
+    for name in ("reference_write.npy", "noise_pred_0.npy"):
+        left = np.load(roots[0] / name, allow_pickle=False)
+        right = np.load(roots[1] / name, allow_pickle=False)
+        boundary[name] = metrics(right.astype(np.float32), left.astype(np.float32))
+    cache_rows = []
+    for path in sorted(roots[0].glob("condition_embed_*.npy")):
+        right_path = roots[1] / path.name
+        if not right_path.is_file():
+            raise ValueError(f"missing candidate cache: {path.name}")
+        left = np.load(path, allow_pickle=False)
+        right = np.load(right_path, allow_pickle=False)
+        cache_rows.append({"name": path.name,
+                           **metrics(right.astype(np.float32), left.astype(np.float32))})
     rows = []
     for step in STEPS:
         for point in POINTS:
@@ -185,7 +207,9 @@ def compare(args):
                                                             left[b].astype(np.float32))
                                                    for b in range(3)]})
     report = {"reference": str(args.reference), "candidate": str(args.candidate),
-              "image_exact": image_exact, "local_capture_sha256": [digest(
+              "image_exact": image_exact, "boundary_exact_inputs": list(exact_inputs),
+              "reference_boundary": boundary, "condition_cache": cache_rows,
+              "local_capture_sha256": [digest(
                   root / "local-layers.json") for root in roots], "rows": rows}
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"output": str(args.output), "sha256": digest(args.output)}))
