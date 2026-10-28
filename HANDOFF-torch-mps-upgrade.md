@@ -266,6 +266,13 @@ NRMSE `0.004855`（主干半部 `0.004952`、skip 半部 `0.004619`），ResNet
 `docs/r3-reference-coarse-boundary-20261028.json`；下一步拆 `down_0` 的两个
 ResNet 与 attention。
 
+随后把首次分叉定位到 `down_0.resnets[0].conv1`：前置 `norm1` NRMSE 仅
+`5.9e-8`，Torch MPS 与 CPU conv1 重放 NRMSE `9.4e-7`，MLX Metal 与 CPU
+重放 NRMSE `0.002060445`；实际 MLX OHWI 权重/bias 与 checkpoint 逐元素一致。
+详见 `HANDOFF-r3-reference-down0-conv1-20261028.md`，证据目录为
+`/Users/daubert/Github/hy3d-upgrade-evidence/20261028/r3-reference-down0-resnet-01/`。
+下一步做最小 MLX GPU Conv2d probe，确认并分析该局部执行差异。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。

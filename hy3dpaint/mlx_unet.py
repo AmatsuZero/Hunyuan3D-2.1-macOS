@@ -109,11 +109,25 @@ class ResnetBlock2D(nn.Module):
             self.conv_shortcut = nn.Conv2d(in_ch, out_ch, 1)
 
     def __call__(self, x, temb):
-        h = nn.silu(self.norm1(x))
+        debug_trace = getattr(self, "_reference_debug_trace", None)
+        norm1 = self.norm1(x)
+        if debug_trace is not None:
+            debug_trace("down_0_resnet_0.norm1", norm1)
+        h = nn.silu(norm1)
         h = self.conv1(h)
-        h = h + self.time_emb_proj(nn.silu(temb))[:, None, None, :]
-        h = nn.silu(self.norm2(h))
+        if debug_trace is not None:
+            debug_trace("down_0_resnet_0.conv1", h)
+        time_emb = self.time_emb_proj(nn.silu(temb))
+        if debug_trace is not None:
+            debug_trace("down_0_resnet_0.time_emb_proj", time_emb)
+        h = h + time_emb[:, None, None, :]
+        norm2 = self.norm2(h)
+        if debug_trace is not None:
+            debug_trace("down_0_resnet_0.norm2", norm2)
+        h = nn.silu(norm2)
         h = self.conv2(h)
+        if debug_trace is not None:
+            debug_trace("down_0_resnet_0.conv2", h)
         if self.in_ch != self.out_ch:
             x = self.conv_shortcut(x)
         return x + h

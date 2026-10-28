@@ -19,6 +19,10 @@ sys.path.insert(0, str(PAINT))
 
 POINTS = (
     "conv_in", "down_0", "down_1", "down_2", "down_3", "mid",
+    "down_0_resnet_0", "down_0_attn_0", "down_0_resnet_1", "down_0_attn_1",
+    "down_0_resnet_0.norm1", "down_0_resnet_0.conv1",
+    "down_0_resnet_0.time_emb_proj", "down_0_resnet_0.norm2",
+    "down_0_resnet_0.conv2",
     "up_0.0.concat", "up_0.0.resnet", "up_0.1.concat", "up_0.1.resnet",
     "up_0.2.concat", "up_0.2.resnet", "up_0.upsample_input",
     "up_0.upsample_nearest", "up_0.upsample", "up_0.output",
@@ -87,6 +91,19 @@ def run_torch(args, inputs):
     for index, block in enumerate(dual.down_blocks):
         hooks.append(block.register_forward_hook(output_hook(f"down_{index}")))
     hooks.append(dual.mid_block.register_forward_hook(output_hook("mid")))
+    for index in (0, 1):
+        block = dual.down_blocks[0]
+        hooks.append(block.resnets[index].register_forward_hook(
+            output_hook(f"down_0_resnet_{index}")
+        ))
+        hooks.append(block.attentions[index].register_forward_hook(
+            output_hook(f"down_0_attn_{index}")
+        ))
+    first_resnet = dual.down_blocks[0].resnets[0]
+    for name in ("norm1", "conv1", "time_emb_proj", "norm2", "conv2"):
+        hooks.append(getattr(first_resnet, name).register_forward_hook(
+            output_hook(f"down_0_resnet_0.{name}")
+        ))
 
     for block_index in (0, 1, 2):
         block = dual.up_blocks[block_index]
@@ -185,6 +202,7 @@ def run_mlx(args, inputs):
         save(args.output, name, value, nhwc=True)
 
     model._reference_debug_trace = trace
+    model.down_block_0.resnets[0]._reference_debug_trace = trace
     model.up_block_0._reference_debug_trace = trace
     for index in (1, 2):
         block = getattr(model, f"up_block_{index}")
