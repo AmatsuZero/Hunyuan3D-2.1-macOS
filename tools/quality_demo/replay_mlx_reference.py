@@ -54,6 +54,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--fp32", action="store_true",
                         help="cast loaded MLX model parameters to float32 before replay")
+    parser.add_argument("--transformer-norm-eps", type=float, default=1e-6,
+                        help="reference Transformer2D GroupNorm epsilon")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output already exists")
@@ -72,7 +74,7 @@ def main():
     timestep = mx.array([int(np.load(args.capture / "reference_timestep.npy"))],
                         dtype=sample.dtype)
     encoder = mx.array(np.load(args.capture / "reference_encoder_hidden_states.npy"))
-    model = HunyuanInnerUNet(input_channels=4)
+    model = HunyuanInnerUNet(input_channels=4, transformer_norm_eps=args.transformer_norm_eps)
     mapped = load_reference_weights_from_pytorch(model, str(args.checkpoint))
     if args.fp32:
         model.update(_tree_map_to_f32(model.parameters()))
@@ -94,6 +96,7 @@ def main():
         "inputs_exact": True,
         "mapped_weights": mapped,
         "precision": "fp32" if args.fp32 else "fp16",
+        "transformer_norm_eps": args.transformer_norm_eps,
         "layers": {},
     }
     for name in LAYERS:

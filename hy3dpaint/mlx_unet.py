@@ -502,9 +502,10 @@ class Basic2p5DTransformerBlock(nn.Module):
 
 class Transformer2D(nn.Module):
     def __init__(self, channels: int, heads: int, cross_dim: int, layer_names: List[str],
-                 norm_groups: int = 32):
+                 norm_groups: int = 32, norm_eps: float = 1e-5):
         super().__init__()
-        self.norm = nn.GroupNorm(norm_groups, channels, pytorch_compatible=True)
+        self.norm = nn.GroupNorm(norm_groups, channels, eps=norm_eps,
+                                 pytorch_compatible=True)
         self.proj_in = nn.Linear(channels, channels)
         self.transformer_blocks = [
             Basic2p5DTransformerBlock(channels, heads, cross_dim, layer_name=name)
@@ -547,12 +548,12 @@ class Transformer2D(nn.Module):
 class CrossAttnDownBlock2D(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, temb_ch: int, heads: int,
                  cross_dim: int, num_layers: int, layer_names: List[List[str]],
-                 add_downsample: bool = True):
+                 add_downsample: bool = True, transformer_norm_eps: float = 1e-5):
         super().__init__()
         channels = [in_ch] + [out_ch] * (num_layers - 1)
         self.resnets = [ResnetBlock2D(c, out_ch, temb_ch) for c in channels]
         self.attentions = [
-            Transformer2D(out_ch, heads, cross_dim, names)
+            Transformer2D(out_ch, heads, cross_dim, names, norm_eps=transformer_norm_eps)
             for names in layer_names
         ]
         if add_downsample:
@@ -598,14 +599,15 @@ class DownBlock2D(nn.Module):
 class CrossAttnUpBlock2D(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, prev_ch: int, temb_ch: int,
                  heads: int, cross_dim: int, num_layers: int,
-                 layer_names: List[List[str]], add_upsample: bool = True):
+                 layer_names: List[List[str]], add_upsample: bool = True,
+                 transformer_norm_eps: float = 1e-5):
         super().__init__()
         channels = [prev_ch + out_ch] + [out_ch + out_ch] * (num_layers - 2) + [out_ch + in_ch]
         if num_layers == 1:
             channels = [prev_ch + in_ch]
         self.resnets = [ResnetBlock2D(c, out_ch, temb_ch) for c in channels]
         self.attentions = [
-            Transformer2D(out_ch, heads, cross_dim, names)
+            Transformer2D(out_ch, heads, cross_dim, names, norm_eps=transformer_norm_eps)
             for names in layer_names
         ]
         if add_upsample:
@@ -689,7 +691,7 @@ class HunyuanInnerUNet(nn.Module):
     16 transformer blocks total with Basic2p5DTransformerBlock.
     """
 
-    def __init__(self, input_channels: int = 12):
+    def __init__(self, input_channels: int = 12, transformer_norm_eps: float = 1e-5):
         super().__init__()
 
         channels = [320, 640, 1280, 1280]
@@ -711,22 +713,26 @@ class HunyuanInnerUNet(nn.Module):
             channels[0], channels[0], temb_ch, heads[0], cross_dim, 2,
             layer_names=[["down_0_0_0"], ["down_0_1_0"]],
             add_downsample=True,
+            transformer_norm_eps=transformer_norm_eps,
         )
         self.down_block_1 = CrossAttnDownBlock2D(
             channels[0], channels[1], temb_ch, heads[1], cross_dim, 2,
             layer_names=[["down_1_0_0"], ["down_1_1_0"]],
             add_downsample=True,
+            transformer_norm_eps=transformer_norm_eps,
         )
         self.down_block_2 = CrossAttnDownBlock2D(
             channels[1], channels[2], temb_ch, heads[2], cross_dim, 2,
             layer_names=[["down_2_0_0"], ["down_2_1_0"]],
             add_downsample=True,
+            transformer_norm_eps=transformer_norm_eps,
         )
         self.down_block_3 = DownBlock2D(channels[2], channels[3], temb_ch, 2)
 
         # Mid block
         self.mid_resnet_0 = ResnetBlock2D(channels[3], channels[3], temb_ch)
-        self.mid_attn = Transformer2D(channels[3], heads[3], cross_dim, ["mid_0_0"])
+        self.mid_attn = Transformer2D(channels[3], heads[3], cross_dim, ["mid_0_0"],
+                                      norm_eps=transformer_norm_eps)
         self.mid_resnet_1 = ResnetBlock2D(channels[3], channels[3], temb_ch)
 
         # Up blocks
@@ -738,16 +744,19 @@ class HunyuanInnerUNet(nn.Module):
             channels[1], channels[2], channels[3], temb_ch, heads[2], cross_dim, 3,
             layer_names=[["up_1_0_0"], ["up_1_1_0"], ["up_1_2_0"]],
             add_upsample=True,
+            transformer_norm_eps=transformer_norm_eps,
         )
         self.up_block_2 = CrossAttnUpBlock2D(
             channels[0], channels[1], channels[2], temb_ch, heads[1], cross_dim, 3,
             layer_names=[["up_2_0_0"], ["up_2_1_0"], ["up_2_2_0"]],
             add_upsample=True,
+            transformer_norm_eps=transformer_norm_eps,
         )
         self.up_block_3 = CrossAttnUpBlock2D(
             channels[0], channels[0], channels[1], temb_ch, heads[0], cross_dim, 3,
             layer_names=[["up_3_0_0"], ["up_3_1_0"], ["up_3_2_0"]],
             add_upsample=False,
+            transformer_norm_eps=transformer_norm_eps,
         )
 
         # Output

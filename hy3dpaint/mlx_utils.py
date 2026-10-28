@@ -875,7 +875,9 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
         if ckpt_path is None:
             raise FileNotFoundError("MLX dual reference requires the source checkpoint")
         print("  [MLX] Building dual reference UNet...")
-        reference_model = HunyuanInnerUNet(input_channels=4)
+        # Diffusers Transformer2D uses GroupNorm eps=1e-6. Keep this scoped
+        # to the opt-in reference producer; generation keeps its prior value.
+        reference_model = HunyuanInnerUNet(input_channels=4, transformer_norm_eps=1e-6)
         loaded = load_reference_weights_from_pytorch(reference_model, ckpt_path)
         reference_use_fp32 = use_fp32 or os.environ.get("HUNYUAN_MLX_REFERENCE_FP32") == "1"
         if reference_use_fp32:

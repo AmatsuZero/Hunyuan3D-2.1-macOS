@@ -486,6 +486,10 @@ def stage_capture(args):
             "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
             "reference_forward_mlx": os.environ.get("HUNYUAN_MLX_REFERENCE_FORWARD") == "1",
             "reference_dtype": str(mlx_dispatch._reference_dtype),
+            "reference_transformer_norm_eps": (
+                mlx_dispatch._reference_model.mid_attn.norm.eps
+                if mlx_dispatch._reference_model is not None else None
+            ),
             "generation_dtype": str(mlx_dispatch._mlx_dtype),
             "outer_dino_projector": type(pipe.unet.image_proj_model_dino).__module__ + "." +
                                     type(pipe.unet.image_proj_model_dino).__name__,

@@ -166,7 +166,7 @@ def run_mlx(args, inputs):
     from mlx_unet import HunyuanInnerUNet
     from mlx_utils import _tree_map_to_f32, load_reference_weights_from_pytorch
 
-    model = HunyuanInnerUNet(input_channels=4)
+    model = HunyuanInnerUNet(input_channels=4, transformer_norm_eps=args.transformer_norm_eps)
     mapped = load_reference_weights_from_pytorch(model, str(args.checkpoint))
     model.update(_tree_map_to_f32(model.parameters()))
     mx.eval(model.parameters())
@@ -197,7 +197,8 @@ def run_mlx(args, inputs):
                    mode="w", reference_cache=cache)
     mx.eval([result, *cache.values()])
     return {"mapped_weights": mapped, "cache_layers": len(cache),
-            "reference_write_shape": list(result.shape), "precision": "fp32"}
+            "reference_write_shape": list(result.shape), "precision": "fp32",
+            "transformer_norm_eps": args.transformer_norm_eps}
 
 
 def compare(args):
@@ -240,6 +241,8 @@ def main():
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--torch-fp32", action="store_true",
                         help="run the Torch reference model and inputs in float32")
+    parser.add_argument("--transformer-norm-eps", type=float, default=1e-6,
+                        help="MLX reference Transformer2D GroupNorm epsilon")
     parser.add_argument("--torch-trace", type=Path)
     parser.add_argument("--mlx-trace", type=Path)
     args = parser.parse_args()
