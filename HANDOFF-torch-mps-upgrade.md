@@ -252,6 +252,13 @@ projection 重放与 Torch 捕获几乎逐元素一致，MLX 捕获差异仅 `0.
 异常尚不能解释真实误差。详见 `HANDOFF-r3-reference-group-variance-20261028.md`。
 下一步从 `up_1.1.resnet` 前继续追踪 concat、ResNet 内部与主干/skip。
 
+随后已有 trace 的边界对照显示：`up_1.1.concat` 在进入 ResNet 前已有
+NRMSE `0.004855`（主干半部 `0.004952`、skip 半部 `0.004619`），ResNet
+输出为 `0.004198`，没有放大；更明显放大出现在 `up_1.1.attn` (`0.007576`)
+及其 Transformer FF/output (`0.007635/0.007837`)。详见
+`HANDOFF-r3-reference-resnet-boundary-20261028.md`，下一步追踪
+`up_1.0` attention 到 concat 以及 `up_1.1` attention1/FF 的同输入算子。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。
