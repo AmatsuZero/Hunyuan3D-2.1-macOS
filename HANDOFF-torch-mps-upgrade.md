@@ -484,3 +484,18 @@ latent 坐标到 `generated_5/11.png` 局部超阈值像素的因果映射。occ
 `d7caf7ceade1af91983f6e8a450e1710da7c4f2a5649f4707f264f1e7c789e9a`，
 均在 §14 的外部证据目录。下一步聚焦 view 5 的逐步三分支、CFG 与 latent
 局部差，image 10 作为反例；仍不能切换默认路径。
+
+## 17. R3 occluded512 view 5 逐步局部定位（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-view5-step-localization-20261029.md`](HANDOFF-r3-occluded512-view5-step-localization-20261029.md)。
+只用归档 trace 做 CPU 离线对照，15 步、三分支 noise、CFG 后输出与 scheduler
+后 latent 均覆盖。image 5/view 5 albedo 的局部 CFG 差在 step 3、6–9 放大，
+step 7 mean-abs 峰值 `0.21860`；image 11/view 5 MR 在 step 10–14 放大，
+step 14 峰值 `0.32144`。image 10/view 4 MR 的局部 latent 差更大，但最终
+图像 max 仅 `9/255`，继续作为反例。三者 initial latent 完全一致；CFG
+差基本由分支 noise 差解释，scheduler 不是首次分叉源，但具体 inner UNet
+算子仍未定位。归档 JSON SHA256
+`a43ed9a906504644e959f18cd0cae93e42042598576949129f6b11a05e13c48f`。
+GPU 前已确认 ComfyUI queue 空、唯一相关进程是既有服务；本阶段没有运行 GPU。
+下一阶段在 fresh output 下做 view 5 局部中间层 capture，仍保持单 GPU、
+1 GiB MLX cache 和默认路径不变。

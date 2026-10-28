@@ -17,8 +17,9 @@ trace，未启动 GPU、未修改模型代码、未覆盖 GLB。工作区仍为
 - image 11 窗口：latent `y=41..42,x=28..29`（view 5 / MR）
 - image 10 窗口：latent `y=42..44,x=34..36`（view 4 / MR，反例）
 
-离线输出写在 `/private/tmp/hy3d-occluded512-view5-step-localization-20261029-v3.json`
-（当前运行 SHA256 `a43ed9a906504644e959f18cd0cae93e42042598576949129f6b11a05e13c48f`）。
+离线输出先写在 `/private/tmp/hy3d-occluded512-view5-step-localization-20261029-v3.json`，
+再归档到 `/Users/daubert/Github/hy3d-upgrade-evidence/20261029/r3-reference-winograd-optin-20261029/occluded512-view5-step-localization.json`；
+`cmp` 一致，SHA256 `a43ed9a906504644e959f18cd0cae93e42042598576949129f6b11a05e13c48f`。
 
 ## 结果
 
