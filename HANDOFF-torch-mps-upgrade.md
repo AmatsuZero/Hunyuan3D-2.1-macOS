@@ -230,6 +230,12 @@ CPU Torch/MLX 对照差异较小，支持上游误差被放大，首个来源仍
 对照也未消除误差。证据和下一步见 `HANDOFF-r3-reference-up2-stage-trace-20261028.md`；
 保持默认 Torch reference 与 cache `0.01` / write `0.03` 门槛。
 
+随后对冻结的 `norm3 → ff.net.0.proj → GEGLU` 做了离线归因：同 checkpoint 的 CPU
+projection 重放与 Torch 捕获几乎逐元素一致，MLX 捕获差异仅 `0.000357`；gate
+输入差异被 GEGLU 放大到 `0.007472`。这支持误差来自更早的 `up_1.1` hidden state
+分叉，尚未定位到具体 attention/skip/normalization 分支。详见
+`HANDOFF-r3-reference-ff-attribution-20261028.md`；默认 dispatch 和门槛继续冻结。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。
