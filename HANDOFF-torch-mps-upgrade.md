@@ -273,6 +273,13 @@ ResNet 与 attention。
 `/Users/daubert/Github/hy3d-upgrade-evidence/20261028/r3-reference-down0-resnet-01/`。
 下一步做最小 MLX GPU Conv2d probe，确认并分析该局部执行差异。
 
+最小 MLX Metal `Conv2d` probe 与完整 trace 输出逐元素相同；按 4 块输入通道
+累加可把局部 NRMSE 从约 `0.002059` 降至 `4.90e-7`。但只替换这一层的
+16 层 reference replay 使最大 cache 从 `0.0130166` 升至 `0.0147171`，
+仍超 `0.01`；write 为 `0.0238399`，在 `0.03` 内。详见
+`HANDOFF-r3-reference-conv1-split-probe-20261028.md`。单点改法未接入默认，
+下一步先按卷积形状/层位隔离其他数值因素。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。
