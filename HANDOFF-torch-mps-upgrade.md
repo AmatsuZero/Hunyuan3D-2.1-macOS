@@ -236,6 +236,12 @@ projection 重放与 Torch 捕获几乎逐元素一致，MLX 捕获差异仅 `0.
 分叉，尚未定位到具体 attention/skip/normalization 分支。详见
 `HANDOFF-r3-reference-ff-attribution-20261028.md`；默认 dispatch 和门槛继续冻结。
 
+随后确认 Diffusers Transformer2D GroupNorm epsilon 为 `1e-6`，当前 MLX 默认是
+`1e-5`。单变量 reference replay 将失败输入 max cache 从 `0.014330` 降到
+`0.013018`，仍未过 `0.01`；up concat 拆分显示误差主要沿主干传播。详见
+`HANDOFF-r3-reference-norm-epsilon-20261028.md`。该 replay 启动前 queue 查询被
+自动审查 429 拒绝，流程证据标为未验证；默认路径和门槛继续冻结。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。
