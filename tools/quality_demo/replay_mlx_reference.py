@@ -56,9 +56,20 @@ def main():
                         help="cast loaded MLX model parameters to float32 before replay")
     parser.add_argument("--transformer-norm-eps", type=float, default=1e-6,
                         help="reference Transformer2D GroupNorm epsilon")
+    parser.add_argument(
+        "--mlx-cache-limit-mib",
+        type=int,
+        default=1024,
+        help="MLX free-cache limit in MiB (default: 1024)",
+    )
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output already exists")
+    if args.mlx_cache_limit_mib <= 0:
+        parser.error("--mlx-cache-limit-mib must be positive")
+
+    cache_limit_bytes = args.mlx_cache_limit_mib * 1024**2
+    previous_cache_limit = mx.set_cache_limit(cache_limit_bytes)
 
     for name in ("reference_sample", "reference_timestep",
                  "reference_encoder_hidden_states"):
@@ -97,6 +108,10 @@ def main():
         "mapped_weights": mapped,
         "precision": "fp32" if args.fp32 else "fp16",
         "transformer_norm_eps": args.transformer_norm_eps,
+        "mlx_cache_policy": {
+            "limit_bytes": cache_limit_bytes,
+            "previous_limit_bytes": previous_cache_limit,
+        },
         "layers": {},
     }
     for name in LAYERS:

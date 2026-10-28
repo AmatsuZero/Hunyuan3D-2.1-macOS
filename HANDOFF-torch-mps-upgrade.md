@@ -284,7 +284,17 @@ ResNet 与 attention。
 cache 最大 NRMSE `0.0092018`、reference write `0.0158142`，均通过原
 `0.01/0.03` 门槛；验证器 exit 0。该实现仍是临时诊断，未接入默认路径，尚未
 覆盖其他输入、完整 15 步或性能。详见 `HANDOFF-r3-reference-split-all-conv-20261028.md`，
-下一步收窄必要卷积集合并评估性能成本。
+后续通过 Winograd 调度探针收窄到卷积算法路径。
+
+Winograd fallback 双输入阶段已完成，详见
+`HANDOFF-r3-reference-winograd-fallback-20261028.md`。当前 MLX 0.32.4 上，
+`MLX_CONV_WINOGRAD_WORKING_SET=1` 使真实 `down_0` Conv2d 与 Torch MPS 的
+NRMSE 降至 `9.37e-7`；在 1 GiB MLX idle-cache 下，occluded512 的完整
+reference cache/write NRMSE 为 `0.007403/0.013200`，reference384 为
+`0.004554/0.010591`，均通过原 `0.01/0.03` 门槛，85/85 unittest 通过。
+该变量影响整个 MLX 进程；完整 15 步、同实例 reset、颜色、性能/内存仍待验证，
+默认 Torch reference 与 dispatch 均不切换。离线 replay 目前保留半精度 capture
+输入，真实 opt-in fp32 reference 会将输入也转 fp32；下一阶段须验证这个差异。
 
 ## 9. 可复制验证命令
 
