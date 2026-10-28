@@ -15,6 +15,8 @@ except ImportError:
 
 
 def _as_mlx(tensor, dtype=None):
+    if isinstance(tensor, mx.array):
+        return tensor if dtype is None else tensor.astype(dtype)
     value = mx.array(tensor.detach().cpu().numpy())
     return value if dtype is None else value.astype(dtype)
 
@@ -48,7 +50,11 @@ def run_mlx_denoise(
         raise ValueError("camera azimuth count does not match views")
     if embeds_normal is None or embeds_position is None:
         raise ValueError("normal and position embeddings are required")
-    if first_noise_pred.dtype != initial_latents.dtype:
+    latents = _as_mlx(initial_latents)
+    if isinstance(first_noise_pred, mx.array):
+        if first_noise_pred.dtype != latents.dtype:
+            raise ValueError("first prediction and latent dtype differ")
+    elif first_noise_pred.dtype != initial_latents.dtype:
         raise ValueError("first prediction and latent dtype differ")
 
     schedule = [int(value) for value in timesteps]
@@ -68,7 +74,6 @@ def run_mlx_denoise(
     else:
         trace = None
 
-    latents = _as_mlx(initial_latents)
     normal = _as_mlx(embeds_normal, latents.dtype)
     position = _as_mlx(embeds_position, latents.dtype)
     expected_embed_shape = (initial_latents.shape[0] // (pbr_views * views) * 3,

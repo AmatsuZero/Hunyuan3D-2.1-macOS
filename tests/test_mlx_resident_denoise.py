@@ -59,6 +59,22 @@ class MLXResidentDenoiseTests(unittest.TestCase):
         np.testing.assert_array_equal(np.array(sample[:, 8:12]), 2)
         self.assertEqual(int(np.array(timestep)[0]), int(torch_scheduler.timesteps[1]))
 
+    def test_mlx_first_prediction_stays_in_mlx(self):
+        from hy3dpaint.mlx_resident_denoise import run_mlx_denoise
+
+        scheduler = UniPCMultistepScheduler.from_config(self.config)
+        scheduler.set_timesteps(1, device="cpu")
+        initial = torch.full((2, 4, 2, 2), 0.2, dtype=torch.float16)
+        prediction = mx.zeros((6, 4, 2, 2), dtype=mx.float16)
+        embeds = torch.ones((3, 1, 4, 2, 2), dtype=torch.float16)
+        result = run_mlx_denoise(
+            _ConstantMLXDispatch(), initial, prediction,
+            timesteps=scheduler.timesteps, scheduler_config=dict(scheduler.config),
+            embeds_normal=embeds, embeds_position=embeds,
+            guidance_scale=3.0, camera_azims=[0], pbr_views=2, views=1,
+        )
+        self.assertEqual(result.dtype, initial.dtype)
+
 
 if __name__ == "__main__":
     unittest.main()

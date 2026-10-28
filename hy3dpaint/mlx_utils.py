@@ -296,6 +296,8 @@ class MLXDispatchUNet(torch.nn.Module):
             if os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1":
                 if not self._cached_mlx.get("condition_embed_dict"):
                     raise RuntimeError("HUNYUAN_MLX_FIRST_STEP requires outer reference cache")
+                if os.environ.get("HUNYUAN_MLX_RESIDENT_LOOP") == "1":
+                    return self._mlx_forward_raw(sample, timestep)
                 return self._mlx_forward(sample, timestep)
             return self._original(sample, timestep, encoder_hidden_states, *args, **kwargs)
 
@@ -473,13 +475,22 @@ class MLXDispatchUNet(torch.nn.Module):
 
     def _mlx_forward(self, sample, timestep, debug_trace=None):
         """Run MLX model and convert output back to PyTorch."""
+        output = self._mlx_forward_raw(sample, timestep, debug_trace=debug_trace)
+
+        # Convert back to PyTorch on MPS
+        output_pt = torch.from_numpy(np.array(output)).to(
+            dtype=sample.dtype, device=sample.device
+        )
+
+        # Return as tuple (matching inner UNet return format)
+        return (output_pt,)
+
+    def _mlx_forward_raw(self, sample, timestep, debug_trace=None):
+        """Run the cached MLX model and keep its output in MLX."""
         c = self._cached_mlx
         dtype = self._mlx_dtype
-
         sample_mlx = _pt_to_mx(sample).astype(dtype)
         timestep_mlx = mx.array([timestep.item()]).astype(dtype)
-
-        # Run MLX UNet
         output = self._mlx_model(
             sample_mlx,
             timestep_mlx,
@@ -492,17 +503,8 @@ class MLXDispatchUNet(torch.nn.Module):
             mva_scale=c["mva_scale"],
             debug_trace=debug_trace,
         )
-
-        # mx.eval forces lazy computation to complete on Metal GPU
         mx.eval(output)  # noqa: S307 — this is MLX's graph eval, not Python eval
-
-        # Convert back to PyTorch on MPS
-        output_pt = torch.from_numpy(np.array(output)).to(
-            dtype=sample.dtype, device=sample.device
-        )
-
-        # Return as tuple (matching inner UNet return format)
-        return (output_pt,)
+        return output
 
     def forward_mlx(self, sample, timestep, debug_trace=None):
         """Run the cached inner model entirely with MLX arrays.

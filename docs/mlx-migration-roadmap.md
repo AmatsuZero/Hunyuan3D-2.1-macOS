@@ -229,8 +229,10 @@ opt-in 首步 inner UNet 已用 MLX 运行完整 15 步并做固定条件对照�
 `HANDOFF-r3-first-step-20261028.md`）。CFG + UniPC 已对真实 15 步张量做组合 replay
 （见 `HANDOFF-r3-cfg-scheduler-20261028.md`）。opt-in resident loop 已让第 2–15 步
 MLX latent、CFG、UniPC 和 inner UNet 直接连接，并完成真实 15 步固定条件对照
-（见 `HANDOFF-r3-resident-loop-20261028.md`）。outer reference/条件生产与首步
-output bridge 仍依赖 Torch，因此“全 MLX 推理”仍未完成。上面的性能
+（见 `HANDOFF-r3-resident-loop-20261028.md`）。首步 inner UNet 的 MLX output
+现已直接进入 resident loop，真实 15 步固定条件输出与桥接版逐元素相同（见
+`HANDOFF-r3-direct-first-output-20261028.md`）。outer reference/条件生产、
+首步 sample 输入及最终 VAE 仍依赖 Torch，因此“全 MLX 推理”仍未完成。上面的性能
 收益均为待证假设，不能据现有代码注释的 SDPA 倍数推算最终速度。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。

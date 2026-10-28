@@ -673,7 +673,7 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
 
                 # predict the noise residual
 
-                noise_pred = self.unet(
+                unet_result = self.unet(
                     latent_model_input,
                     t,
                     encoder_hidden_states=prompt_embeds,
@@ -682,7 +682,8 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
                     **kwargs,
-                )[0]
+                )
+                noise_pred = unet_result if resident_mlx else unet_result[0]
                 latents = rearrange(latents, "b n_pbr n c h w -> (b n_pbr n) c h w")
                 if resident_mlx:
                     from mlx_resident_denoise import run_mlx_denoise

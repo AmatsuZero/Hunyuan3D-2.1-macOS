@@ -67,6 +67,40 @@ class MLXFirstStepDispatchTests(unittest.TestCase):
                                       cross_attention_kwargs={"mode": "r"})[0].item(), 2)
             self.assertEqual(original.calls, 0)
 
+    def test_resident_first_generation_returns_mlx_output_directly(self):
+        from hy3dpaint.mlx_utils import MLXDispatchUNet
+
+        class Model:
+            def __call__(self, sample, timestep, encoder, **kwargs):
+                self.received = (sample, timestep, encoder, kwargs)
+                return mx.zeros((1, 4, 2, 2), dtype=sample.dtype)
+
+        original = _Original()
+        model = Model()
+        dispatch = MLXDispatchUNet(original, model)
+        sample = torch.zeros((1, 4, 2, 2), dtype=torch.float16)
+        encoder = torch.zeros((1, 77, 1024), dtype=torch.float16)
+        condition = torch.zeros((1, 4, 320), dtype=torch.float16)
+
+        with mock.patch.dict(os.environ, {
+            "HUNYUAN_MLX_FIRST_STEP": "1",
+            "HUNYUAN_MLX_RESIDENT_LOOP": "1",
+        }):
+            result = dispatch(
+                sample,
+                torch.tensor(999),
+                encoder,
+                cross_attention_kwargs={
+                    "mode": "r",
+                    "num_in_batch": 1,
+                    "condition_embed_dict": {"layer": condition},
+                },
+            )
+
+        self.assertIsInstance(result, mx.array)
+        self.assertEqual(original.calls, 0)
+        self.assertEqual(model.received[0].dtype, mx.float16)
+
     def test_default_first_generation_stays_on_torch(self):
         from hy3dpaint.mlx_utils import MLXDispatchUNet
 
