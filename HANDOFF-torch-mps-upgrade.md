@@ -433,3 +433,25 @@ P2 trace gate 已完成。五个真实尺寸 Torch/MPS 窗口在候选 Torch 2.1
 ## 13. P5 串行性能/内存样本（2026-10-28）
 
 阶段交接见 [`HANDOFF-p5-performance-memory-20261028.md`](HANDOFF-p5-performance-memory-20261028.md)。在空 ComfyUI queue、相同 mesh/固定初始 diffusion noise/6 视角/512/15 步/1 GiB MLX cache threshold 下，候选 2.14.1 与旧版 2.5.1 各完成 3 次完整 benchmark。候选总耗时中位数 `117.711s`（范围 `117.180–123.536s`），旧版 `196.740s`（`194.004–199.497s`）；候选 RSS/MPS driver/MLX peak 中位数约 `8.20/26.46/5.64 GiB`，旧版约 `11.02/36.67/8.98 GiB`。旧版 swap delta 为 `+6.97–+9.06 GiB`，候选为 `−0.65–+3.32 GiB`。这些是当前两套完整栈的可复现样本，不是 Torch 2.14.1 的独立加速证明：旧版 fallback=1、旧 MLX layout/upsampler 和 bake 路径不同；只有输入 mesh、初始 diffusion latents、cache policy 与串行条件被匹配。外部摘要位于 `p5-performance-01/summary.json`。新会话创建仍因本地 `codex_tui` transport `http://127.0.0.1:54618/mcp` send error 失败，未绕过。
+
+## 14. R3 Winograd opt-in fixed512 / occluded512 复验（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-reference-winograd-optin-20261028.md`](HANDOFF-r3-reference-winograd-optin-20261028.md) 的 2026-10-29 补充。
+本轮完成了 fixed512 的合同验收，并复跑 occluded512 诊断性能异常。证据归档于
+`/Users/daubert/Github/hy3d-upgrade-evidence/20261029/r3-reference-winograd-optin-20261029/`，
+汇总 SHA256 `f2d0d4dda929cdfd71aa296a73268aa4185d3b06a86652b888ca4e481493c52f`。
+
+- fixed512：cache `0.00391466`、write `0.01101064`、latent `0.00364171`、图像
+  `0.03951/255` mean、`26/255` max，耗时 `81.282s`，相对既有同输入 fp32
+  `81.508s` 为 `0.9972x`；探索性门槛通过。
+- occluded512：cache `0.00740603`、write `0.01320104`、latent `0.00644233`、
+  图像 `0.05954/255` mean、`43/255` max，耗时 `83.437s`；43/255 位于
+  `generated_5.png` 的 17 个像素（`x=206..211,y=309..333`），
+  `generated_11.png` 另有 2 个超 32 像素。该质量
+  max 门槛仍失败，默认路径保持不变。
+- 旧记录的 `107.848s/83.297s=1.295x` 性能回退未复现；新复验为
+  `83.437s/83.297s=1.002x`，且 12 图与旧 opt-in 逐像素 exact。29.5% 只能作为
+  单次异常记录，尚不足以归因或宣称性能结论。
+
+运行前 queue 均为空，只有既有 ComfyUI 服务；输出未写入仓库或交付 GLB。
+默认 Torch reference、默认 Winograd 和默认 MLX dispatch 未切换。
