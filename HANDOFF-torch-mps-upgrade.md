@@ -499,3 +499,18 @@ step 14 峰值 `0.32144`。image 10/view 4 MR 的局部 latent 差更大，但�
 GPU 前已确认 ComfyUI queue 空、唯一相关进程是既有服务；本阶段没有运行 GPU。
 下一阶段在 fresh output 下做 view 5 局部中间层 capture，仍保持单 GPU、
 1 GiB MLX cache 和默认路径不变。
+
+## 18. R3 occluded512 局部中间层 capture（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-local-layer-capture-20261029.md`](HANDOFF-r3-occluded512-local-layer-capture-20261029.md)。
+空 ComfyUI queue 下串行完成 Torch-reference 与 MLX-reference/Winograd-disabled
+两侧 fresh output capture，1 GiB MLX cache；各自 12 张图逐字节匹配原归档。
+step 3/6/10/14、image 5/11/view 5 与 image 10/view 4 反例的九个 inner UNet
+局部探针已归档。对照 JSON SHA256
+`a511dc83342f363646775397748943d2aeafd48396aa60224ba7ab3f41ff8daa`。
+step 3 的最早探针 `conv_in` 已见差异，且先前 resident trace 显示进入该步的
+latent 已不同；此处无法把差异单独归因给输入或 Winograd。step 14 的
+`up_3.2.attn` 对 image 10 反例的局部 NRMSE `0.117600`，反而高于 image 5/11
+的 `0.052962/0.072279`，说明单点层误差大小不能直接解释图像超阈值。
+`43/255` 图像门槛仍失败，默认路径不切换。下一步优先对现有归档做 CPU-only
+step 0→3 输入/参考缓存差的因果拆分，再决定是否需要更窄的 GPU 实验。
