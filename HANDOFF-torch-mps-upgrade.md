@@ -296,6 +296,15 @@ reference cache/write NRMSE 为 `0.007403/0.013200`，reference384 为
 默认 Torch reference 与 dispatch 均不切换。离线 replay 目前保留半精度 capture
 输入，真实 opt-in fp32 reference 会将输入也转 fp32；下一阶段须验证这个差异。
 
+随后完成 Winograd fallback 的 opt-in dispatch，详见
+`HANDOFF-r3-reference-winograd-optin-20261028.md`。新增
+`HUNYUAN_MLX_DISABLE_WINOGRAD=1`，默认环境不变；真实遮挡 512 resident loop
+的 reference cache/write 为 `0.007406/0.013201`，15 步 latent 最大 NRMSE
+`0.006442`，同实例重复图像像素逐元素一致、两次 reset 清空。12 图平均差
+`0.0595/255`，最大差 `43/255`，超过本轮探索性 `32/255` 上限；fallback 单样本
+耗时 `107.85s`，此前同输入 MLX fp32 为 `83.30s`。因此 opt-in 质量和状态合同
+部分通过，图像最大差与性能仍开放，默认 dispatch 不切换；全量回归 `88/88`。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。

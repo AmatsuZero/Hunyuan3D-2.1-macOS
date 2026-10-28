@@ -809,6 +809,29 @@ def _load_inner_unet_weights(model: HunyuanInnerUNet, ckpt_path: str | None) -> 
     return "checkpoint"
 
 
+def _configure_mlx_conv_policy():
+    """Apply the explicit opt-in policy for MLX's Winograd convolution path.
+
+    MLX reads ``MLX_CONV_WINOGRAD_WORKING_SET`` when dispatching a convolution.
+    A value of ``1`` leaves no usable Winograd working set and routes eligible
+    convolutions through the implicit GEMM fallback.  Keep this opt-in so the
+    default dispatch and its performance characteristics stay unchanged.
+    """
+    disable_winograd = os.environ.get("HUNYUAN_MLX_DISABLE_WINOGRAD") == "1"
+    working_set = os.environ.get("MLX_CONV_WINOGRAD_WORKING_SET")
+    if not disable_winograd:
+        return {"disable_winograd": False, "working_set": working_set}
+    if working_set not in (None, "1"):
+        raise ValueError(
+            "HUNYUAN_MLX_DISABLE_WINOGRAD=1 requires "
+            "MLX_CONV_WINOGRAD_WORKING_SET to be unset or 1"
+        )
+    if working_set is None:
+        os.environ["MLX_CONV_WINOGRAD_WORKING_SET"] = "1"
+        working_set = "1"
+    return {"disable_winograd": True, "working_set": working_set}
+
+
 def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
     """Replace pipeline's inner UNet with MLX dispatch wrapper.
 
@@ -818,6 +841,10 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
     Returns:
         MLXDispatchUNet instance, or None if setup fails
     """
+    conv_policy = _configure_mlx_conv_policy()
+    if conv_policy["disable_winograd"]:
+        print("  [MLX] Winograd disabled (implicit GEMM fallback opt-in)")
+
     # Find checkpoint path
     ckpt_path = None
     for path in [
@@ -864,6 +891,7 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
     outer_unet = pipeline.unet
     original_inner = outer_unet.unet
     dispatch = MLXDispatchUNet(original_inner, mlx_model, use_fp32=use_fp32)
+    dispatch._conv_policy = conv_policy
     try:
         from .mlx_dino_torch_adapter import install_mlx_dino_projector
     except ImportError:

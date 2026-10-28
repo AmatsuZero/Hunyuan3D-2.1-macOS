@@ -483,6 +483,7 @@ def stage_capture(args):
         report["mlx_dispatch"] = {
             "enabled": True,
             "fp32": bool(getattr(mlx_dispatch, "_use_fp32", False)),
+            "conv_policy": getattr(mlx_dispatch, "_conv_policy", None),
             "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
             "reference_forward_mlx": os.environ.get("HUNYUAN_MLX_REFERENCE_FORWARD") == "1",
             "reference_dtype": str(mlx_dispatch._reference_dtype),
