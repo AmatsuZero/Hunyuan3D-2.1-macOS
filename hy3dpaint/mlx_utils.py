@@ -178,6 +178,46 @@ def _load_transformer2d_weights(transformer2d, prefix: str, state_dict: dict):
         )
 
 
+def _load_reference_attention_weights(block, prefix: str, state_dict: dict):
+    """Load the standard attention weights used by ``unet_dual`` reference mode."""
+    p = f"unet_dual.{prefix}.transformer"
+
+    def get(key):
+        return _pt_to_mx(state_dict[key])
+
+    for name in ("norm1", "norm2", "norm3"):
+        getattr(block, name).weight = get(f"{p}.{name}.weight")
+        getattr(block, name).bias = get(f"{p}.{name}.bias")
+    for name in ("attn1", "attn2"):
+        module = "attn1" if name == "attn1" else "attn2"
+        getattr(block, f"{name}_to_q").weight = get(f"{p}.{module}.to_q.weight")
+        getattr(block, f"{name}_to_k").weight = get(f"{p}.{module}.to_k.weight")
+        getattr(block, f"{name}_to_v").weight = get(f"{p}.{module}.to_v.weight")
+        getattr(block, f"{name}_to_out").weight = get(f"{p}.{module}.to_out.0.weight")
+        getattr(block, f"{name}_to_out").bias = get(f"{p}.{module}.to_out.0.bias")
+    block.ff_proj.weight = get(f"{p}.ff.net.0.proj.weight")
+    block.ff_proj.bias = get(f"{p}.ff.net.0.proj.bias")
+    block.ff_out.weight = get(f"{p}.ff.net.2.weight")
+    block.ff_out.bias = get(f"{p}.ff.net.2.bias")
+
+
+def _load_reference_transformer2d_weights(transformer2d, prefix: str, state_dict: dict):
+    def get(key):
+        return _pt_to_mx(state_dict[key])
+
+    base = f"unet_dual.{prefix}"
+    transformer2d.norm.weight = get(f"{base}.norm.weight")
+    transformer2d.norm.bias = get(f"{base}.norm.bias")
+    transformer2d.proj_in.weight = get(f"{base}.proj_in.weight")
+    transformer2d.proj_in.bias = get(f"{base}.proj_in.bias")
+    transformer2d.proj_out.weight = get(f"{base}.proj_out.weight")
+    transformer2d.proj_out.bias = get(f"{base}.proj_out.bias")
+    for i, block in enumerate(transformer2d.transformer_blocks):
+        _load_reference_attention_weights(
+            block, f"{prefix}.transformer_blocks.{i}", state_dict
+        )
+
+
 class _TrackedStateDict(dict):
     """Record checkpoint keys actually consumed by the explicit MLX mapping."""
 
@@ -274,6 +314,76 @@ def load_weights_from_pytorch(model: HunyuanInnerUNet, ckpt_path: str,
         return state_dict.used_keys
 
 
+def load_reference_weights_from_pytorch(model: HunyuanInnerUNet, ckpt_path: str):
+    """Load exactly the ``unet_dual`` checkpoint subtree for MLX reference mode."""
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    source_keys = {key for key in checkpoint if key.startswith("unet_dual.")}
+    if not source_keys:
+        raise ValueError("checkpoint has no unet_dual weights")
+    state_dict = _TrackedStateDict(checkpoint)
+
+    def get(key):
+        return _pt_to_mx(state_dict[f"unet_dual.{key}"])
+
+    def get_conv(key):
+        return _conv_weight_pt_to_mlx(state_dict[f"unet_dual.{key}"])
+
+    for linear in ("linear_1", "linear_2"):
+        module = getattr(model.time_embedding, linear)
+        module.weight = get(f"time_embedding.{linear}.weight")
+        module.bias = get(f"time_embedding.{linear}.bias")
+    for name in ("conv_in", "conv_out"):
+        module = getattr(model, name)
+        module.weight = get_conv(f"{name}.weight")
+        module.bias = get(f"{name}.bias")
+    model.conv_norm_out.weight = get("conv_norm_out.weight")
+    model.conv_norm_out.bias = get("conv_norm_out.bias")
+
+    for block_idx, block in enumerate((model.down_block_0, model.down_block_1,
+                                       model.down_block_2, model.down_block_3)):
+        prefix = f"unet_dual.down_blocks.{block_idx}"
+        for index, resnet in enumerate(block.resnets):
+            _load_resnet_weights(resnet, f"{prefix}.resnets.{index}", state_dict)
+        if hasattr(block, "attentions"):
+            for index, attention in enumerate(block.attentions):
+                _load_reference_transformer2d_weights(
+                    attention, f"down_blocks.{block_idx}.attentions.{index}", state_dict
+                )
+        if getattr(block, "has_downsample", False):
+            block.downsample.conv.weight = _conv_weight_pt_to_mlx(
+                state_dict[f"{prefix}.downsamplers.0.conv.weight"]
+            )
+            block.downsample.conv.bias = _pt_to_mx(
+                state_dict[f"{prefix}.downsamplers.0.conv.bias"]
+            )
+
+    for name, resnet in (("resnets.0", model.mid_resnet_0),
+                         ("resnets.1", model.mid_resnet_1)):
+        _load_resnet_weights(resnet, f"unet_dual.mid_block.{name}", state_dict)
+    for i, attention in enumerate((model.mid_attn,)):
+        _load_reference_transformer2d_weights(
+            attention, f"mid_block.attentions.{i}", state_dict
+        )
+
+    for block_idx, block in enumerate((model.up_block_0, model.up_block_1,
+                                       model.up_block_2, model.up_block_3)):
+        prefix = f"unet_dual.up_blocks.{block_idx}"
+        for index, resnet in enumerate(block.resnets):
+            _load_resnet_weights(resnet, f"{prefix}.resnets.{index}", state_dict)
+        if hasattr(block, "attentions"):
+            for index, attention in enumerate(block.attentions):
+                _load_reference_transformer2d_weights(
+                    attention, f"up_blocks.{block_idx}.attentions.{index}", state_dict
+                )
+        if getattr(block, "has_upsample", False):
+            _load_upsample_weights(block.upsample, f"{prefix}.upsamplers.0.conv", state_dict)
+
+    missing = source_keys - state_dict.used_keys
+    if missing:
+        raise ValueError(f"unmapped unet_dual weights: {sorted(missing)[:8]}")
+    return len(source_keys)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Dispatch Wrapper
 # ──────────────────────────────────────────────────────────────────────────────
@@ -295,6 +405,8 @@ class MLXDispatchUNet(torch.nn.Module):
         self._gen_call_count = 0
         self._cached_mlx = None  # Pre-converted MLX arrays
         self._reference_cache_producer = MLXReferenceCacheProducer()
+        self._reference_model = None
+        self._pending_reference_cache = None
 
     def __getattr__(self, name):
         try:
@@ -478,7 +590,11 @@ class MLXDispatchUNet(torch.nn.Module):
 
         # Condition embed dict
         cond_dict = cross_attn.get("condition_embed_dict", {})
-        if os.environ.get("HUNYUAN_MLX_REFERENCE_CACHE") == "1":
+        if self._pending_reference_cache is not None:
+            cached["condition_embed_dict"] = self._pending_reference_cache
+            cached["reference_cache_producer"] = "mlx-reference-forward"
+            self._pending_reference_cache = None
+        elif os.environ.get("HUNYUAN_MLX_REFERENCE_CACHE") == "1":
             cached["condition_embed_dict"] = self._reference_cache_producer.produce(
                 cond_dict, dtype=dtype
             )
@@ -502,6 +618,40 @@ class MLXDispatchUNet(torch.nn.Module):
         self._cached_mlx = cached
         precision = "fp32" if self._use_fp32 else "fp16"
         print(f"  [MLX] Cached {len(cached)} inputs for steps 2-15 ({precision})")
+
+    def set_reference_model(self, model):
+        self._reference_model = model
+
+    def reference_forward_mlx(self, sample, timestep, encoder_hidden_states,
+                              num_in_batch):
+        if self._reference_model is None:
+            raise RuntimeError("MLX reference model is not initialized")
+        sample_mlx = _pt_to_mx(sample).astype(self._mlx_dtype)
+        encoder_mlx = _pt_to_mx(encoder_hidden_states).astype(self._mlx_dtype)
+        timestep_mlx = mx.array([timestep], dtype=self._mlx_dtype)
+        cache = {}
+        output = self._reference_model(
+            sample_mlx,
+            timestep_mlx,
+            encoder_mlx,
+            num_in_batch=num_in_batch,
+            condition_embed_dict={},
+            dino_hidden_states=None,
+            mode="w",
+            reference_cache=cache,
+        )
+        mx.eval([output, *cache.values()])
+        self._pending_reference_cache = cache
+        produced = {
+            name: torch.from_numpy(np.array(value)).to(
+                device=sample.device, dtype=sample.dtype
+            )
+            for name, value in cache.items()
+        }
+        return (
+            torch.from_numpy(np.array(output)).to(device=sample.device, dtype=sample.dtype),
+            produced,
+        )
 
     def _mlx_forward(self, sample, timestep, debug_trace=None):
         """Run MLX model and convert output back to PyTorch."""
@@ -567,6 +717,7 @@ class MLXDispatchUNet(torch.nn.Module):
         self._gen_call_count = 0
         self._cached_mlx = None
         self._reference_cache_producer.reset()
+        self._pending_reference_cache = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -600,6 +751,34 @@ def _tree_map_to_f32(tree):
 # ──────────────────────────────────────────────────────────────────────────────
 # Setup
 # ──────────────────────────────────────────────────────────────────────────────
+
+class _MLXReferenceUNetWrapper(torch.nn.Module):
+    """Opt-in adapter for the outer model's dual reference-write call."""
+
+    def __init__(self, original, dispatch: MLXDispatchUNet):
+        super().__init__()
+        self._original = original
+        self._dispatch = dispatch
+
+    def forward(self, hidden_states, timestep, encoder_hidden_states=None,
+                *args, **kwargs):
+        cross = kwargs.get("cross_attention_kwargs") or {}
+        if os.environ.get("HUNYUAN_MLX_REFERENCE_FORWARD") == "1" and cross.get("mode") == "w":
+            if args:
+                raise ValueError("MLX reference wrapper does not support extra positional args")
+            cache = cross.get("condition_embed_dict")
+            if cache is None:
+                raise ValueError("MLX reference wrapper requires condition_embed_dict")
+            output, produced = self._dispatch.reference_forward_mlx(
+                hidden_states, timestep, encoder_hidden_states,
+                int(cross.get("num_in_batch", 1)),
+            )
+            cache.update(produced)
+            return (output,)
+        return self._original(
+            hidden_states, timestep, encoder_hidden_states,
+            *args, **kwargs
+        )
 
 def _load_inner_unet_weights(model: HunyuanInnerUNet, ckpt_path: str | None) -> str:
     """Select a checked MLX bundle only when explicitly configured."""
@@ -687,6 +866,21 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
         from mlx_dino_torch_adapter import install_mlx_dino_projector
     projector_installed = install_mlx_dino_projector(outer_unet, ckpt_path)
     outer_unet.unet = dispatch
+
+    if os.environ.get("HUNYUAN_MLX_REFERENCE_FORWARD") == "1":
+        if ckpt_path is None:
+            raise FileNotFoundError("MLX dual reference requires the source checkpoint")
+        print("  [MLX] Building dual reference UNet...")
+        reference_model = HunyuanInnerUNet(input_channels=4)
+        loaded = load_reference_weights_from_pytorch(reference_model, ckpt_path)
+        if use_fp32:
+            reference_model.update(_tree_map_to_f32(reference_model.parameters()))
+        mx.eval(reference_model.parameters())
+        dispatch.set_reference_model(reference_model)
+        outer_unet.unet_dual = _MLXReferenceUNetWrapper(
+            outer_unet.unet_dual, dispatch
+        ).eval()
+        print(f"  [MLX] Dual reference weights loaded ({loaded} tensors)")
 
     print(f"  [MLX] Inner UNet replaced with MLX dispatch wrapper")
     if projector_installed:

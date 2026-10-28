@@ -276,7 +276,15 @@ class Basic2p5DTransformerBlock(nn.Module):
         position_voxel_indices: Optional[dict] = None,
         ref_scale: float = 1.0,
         mva_scale: float = 1.0,
+        mode: Optional[str] = None,
+        reference_cache: Optional[dict] = None,
     ) -> mx.array:
+        if mode == "w":
+            if reference_cache is None:
+                raise ValueError("reference mode requires a cache dictionary")
+            return self._reference_forward(
+                hidden_states, encoder_hidden_states, num_in_batch, reference_cache
+            )
         N_pbr = 2  # albedo + mr
         batch_size = hidden_states.shape[0]
         B = batch_size // (N_pbr * num_in_batch)
@@ -428,6 +436,40 @@ class Basic2p5DTransformerBlock(nn.Module):
 
         return hidden_states
 
+    def _reference_forward(self, hidden_states, encoder_hidden_states,
+                           num_in_batch, reference_cache):
+        """Run the dual reference block contract used by ``mode='w'``.
+
+        The dual stream has one material stream and disables MDA/RA/MVA/DINO;
+        each block writes its post-norm self-attention input before text
+        cross-attention and feed-forward layers continue.
+        """
+        batch_size = hidden_states.shape[0]
+        if batch_size % num_in_batch:
+            raise ValueError("reference batch must divide evenly by num_in_batch")
+        batch_size //= num_in_batch
+        norm_hs = self.norm1(hidden_states)
+        q = self.attn1_to_q(norm_hs)
+        k = self.attn1_to_k(norm_hs)
+        v = self.attn1_to_v(norm_hs)
+        attention_output = self._sdpa(q, k, v, hidden_states.shape[0])
+        hidden_states = self.attn1_to_out(attention_output) + hidden_states
+        reference_cache[self.layer_name] = norm_hs.reshape(
+            batch_size, num_in_batch * norm_hs.shape[1], self.dim
+        )
+
+        norm_hs2 = self.norm2(hidden_states)
+        q = self.attn2_to_q(norm_hs2)
+        k = self.attn2_to_k(encoder_hidden_states)
+        v = self.attn2_to_v(encoder_hidden_states)
+        hidden_states = self.attn2_to_out(
+            self._sdpa(q, k, v, hidden_states.shape[0])
+        ) + hidden_states
+
+        ff = self.ff_proj(self.norm3(hidden_states))
+        ff_val, ff_gate = mx.split(ff, 2, axis=-1)
+        return self.ff_out(ff_val * nn.gelu(ff_gate)) + hidden_states
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Transformer2D (wraps transformer blocks with GroupNorm + proj_in/out)
@@ -446,7 +488,8 @@ class Transformer2D(nn.Module):
         self.proj_out = nn.Linear(channels, channels)
 
     def __call__(self, x, encoder_hs, num_in_batch, condition_embed_dict,
-                 dino_hs, position_voxel_indices, ref_scale, mva_scale):
+                 dino_hs, position_voxel_indices, ref_scale, mva_scale,
+                 mode=None, reference_cache=None):
         input_x = x
         B, H, W, C = x.shape
         x = self.norm(x).reshape(B, H * W, C)
@@ -455,7 +498,8 @@ class Transformer2D(nn.Module):
         for block in self.transformer_blocks:
             cond = condition_embed_dict.get(block.layer_name)
             x = block(x, encoder_hs, num_in_batch, cond, dino_hs,
-                      position_voxel_indices, ref_scale, mva_scale)
+                      position_voxel_indices, ref_scale, mva_scale,
+                      mode=mode, reference_cache=reference_cache)
 
         x = self.proj_out(x).reshape(B, H, W, C)
         return x + input_x
@@ -481,7 +525,8 @@ class CrossAttnDownBlock2D(nn.Module):
         self.has_downsample = add_downsample
 
     def __call__(self, x, temb, encoder_hs, num_in_batch, condition_embed_dict,
-                 dino_hs, position_voxel_indices, ref_scale, mva_scale):
+                 dino_hs, position_voxel_indices, ref_scale, mva_scale,
+                 mode=None, reference_cache=None):
         states = []
         for index, (resnet, attn) in enumerate(zip(self.resnets, self.attentions)):
             x = resnet(x, temb)
@@ -489,7 +534,8 @@ class CrossAttnDownBlock2D(nn.Module):
             if debug_trace is not None:
                 debug_trace(f"down_0_resnet_{index}", x)
             x = attn(x, encoder_hs, num_in_batch, condition_embed_dict,
-                     dino_hs, position_voxel_indices, ref_scale, mva_scale)
+                     dino_hs, position_voxel_indices, ref_scale, mva_scale,
+                     mode=mode, reference_cache=reference_cache)
             if debug_trace is not None:
                 debug_trace(f"down_0_attn_{index}", x)
             states.append(x)
@@ -532,12 +578,14 @@ class CrossAttnUpBlock2D(nn.Module):
         self.has_upsample = add_upsample
 
     def __call__(self, x, temb, encoder_hs, num_in_batch, condition_embed_dict,
-                 dino_hs, position_voxel_indices, ref_scale, mva_scale, residuals):
+                 dino_hs, position_voxel_indices, ref_scale, mva_scale, residuals,
+                 mode=None, reference_cache=None):
         for resnet, attn in zip(self.resnets, self.attentions):
             x = mx.concatenate([x, residuals.pop()], axis=-1)
             x = resnet(x, temb)
             x = attn(x, encoder_hs, num_in_batch, condition_embed_dict,
-                     dino_hs, position_voxel_indices, ref_scale, mva_scale)
+                     dino_hs, position_voxel_indices, ref_scale, mva_scale,
+                     mode=mode, reference_cache=reference_cache)
         if self.has_upsample:
             x = self.upsample(x)
         return x
@@ -584,7 +632,7 @@ class HunyuanInnerUNet(nn.Module):
     16 transformer blocks total with Basic2p5DTransformerBlock.
     """
 
-    def __init__(self):
+    def __init__(self, input_channels: int = 12):
         super().__init__()
 
         channels = [320, 640, 1280, 1280]
@@ -598,7 +646,7 @@ class HunyuanInnerUNet(nn.Module):
         self.time_embedding = TimestepEmbedding(channels[0], temb_ch)
 
         # Conv in (12 → 320)
-        self.conv_in = nn.Conv2d(12, channels[0], 3, padding=1)
+        self.conv_in = nn.Conv2d(input_channels, channels[0], 3, padding=1)
 
         # Down blocks
         # Layer names match PyTorch: down_{block_i}_{attn_i}_{transformer_i}
@@ -660,6 +708,8 @@ class HunyuanInnerUNet(nn.Module):
         position_voxel_indices: Optional[dict] = None,
         ref_scale: float = 1.0,
         mva_scale: float = 1.0,
+        mode: Optional[str] = None,
+        reference_cache: Optional[dict] = None,
         debug_trace=None,
     ) -> mx.array:
         # Convert NCHW → NHWC
@@ -686,6 +736,8 @@ class HunyuanInnerUNet(nn.Module):
             position_voxel_indices=position_voxel_indices,
             ref_scale=ref_scale,
             mva_scale=mva_scale,
+            mode=mode,
+            reference_cache=reference_cache,
         )
 
         # Down

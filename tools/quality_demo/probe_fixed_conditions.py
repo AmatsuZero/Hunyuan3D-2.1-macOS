@@ -412,6 +412,7 @@ def stage_capture(args):
             "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
             "position_indices_mlx": os.environ.get("HUNYUAN_MLX_POSITION_INDICES") == "1",
             "reference_cache_mlx": os.environ.get("HUNYUAN_MLX_REFERENCE_CACHE") == "1",
+            "reference_forward_mlx": os.environ.get("HUNYUAN_MLX_REFERENCE_FORWARD") == "1",
             "trace_dir": os.environ.get("HUNYUAN_MLX_RESIDENT_TRACE_DIR"),
         }
 
@@ -443,8 +444,11 @@ def stage_capture(args):
             "enabled": True,
             "fp32": bool(getattr(mlx_dispatch, "_use_fp32", False)),
             "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
+            "reference_forward_mlx": os.environ.get("HUNYUAN_MLX_REFERENCE_FORWARD") == "1",
             "outer_dino_projector": type(pipe.unet.image_proj_model_dino).__module__ + "." +
                                     type(pipe.unet.image_proj_model_dino).__name__,
+            "reference_unet": type(pipe.unet.unet_dual).__module__ + "." +
+                              type(pipe.unet.unet_dual).__name__,
         }
         dino_projector = pipe.unet.image_proj_model_dino
         if hasattr(dino_projector, "bundle_path"):
@@ -498,6 +502,16 @@ def stage_capture(args):
     original_dual = pipe.unet.unet_dual.forward
 
     def dual_forward(*call_args, **call_kwargs):
+        if args.capture_cache and "reference_sample" not in captured:
+            captured["reference_sample"] = torch.as_tensor(_to_numpy(call_args[0]))
+            captured["reference_timestep"] = torch.as_tensor(_to_numpy(call_args[1]))
+            encoder = call_kwargs.get("encoder_hidden_states")
+            if encoder is None and len(call_args) > 2:
+                encoder = call_args[2]
+            if encoder is not None:
+                captured["reference_encoder_hidden_states"] = torch.as_tensor(
+                    _to_numpy(encoder)
+                )
         with trace_scope("reference", args.trace_stage, report):
             result = original_dual(*call_args, **call_kwargs)
         captured["reference_write"] = result[0] if isinstance(result, tuple) else result

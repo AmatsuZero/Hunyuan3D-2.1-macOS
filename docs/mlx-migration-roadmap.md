@@ -242,8 +242,12 @@ position voxel indices 的 opt-in MLX producer/consumer 已通过四分辨率数
 dynamic reference-write 和外层条件 embedding 仍使用 Torch。
 动态 reference cache 已有 opt-in MLX 转换与 reset 边界，16 层 cache 和 15 步
 固定条件原图保持逐元素/逐字节一致（见
-`HANDOFF-r3-reference-cache-boundary-20261028.md`）。这仍由 Torch `unet_dual`
-生成 reference states，下一阶段需真正 MLX reference forward 才能移除该依赖。
+`HANDOFF-r3-reference-cache-boundary-20261028.md`）。该边界阶段仍由 Torch
+`unet_dual` 生成 reference states；后续 MLX forward 见下段。
+opt-in MLX `unet_dual` reference forward 现已完成权重映射、逐层 replay、15 步
+集成和同实例 reset；误差与边界见
+`HANDOFF-r3-mlx-dual-reference-forward-20261028.md`。该路径仍是 fp16 近似、
+未切默认，且 outer Torch 条件合同尚未移除。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。
 当前已验收代码、Torch 升级风险和颜色缺陷分别见同目录的
