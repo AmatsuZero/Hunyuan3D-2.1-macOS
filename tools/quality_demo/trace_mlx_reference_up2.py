@@ -18,6 +18,7 @@ PAINT = PROJECT / "hy3dpaint"
 sys.path.insert(0, str(PAINT))
 
 POINTS = (
+    "conv_in", "down_0", "down_1", "down_2", "down_3", "mid",
     "up_0.0.concat", "up_0.0.resnet", "up_0.1.concat", "up_0.1.resnet",
     "up_0.2.concat", "up_0.2.resnet", "up_0.upsample_input",
     "up_0.upsample_nearest", "up_0.upsample", "up_0.output",
@@ -81,6 +82,11 @@ def run_torch(args, inputs):
         def hook(_module, values):
             save(args.output, name, values[0])
         return hook
+
+    hooks.append(dual.conv_in.register_forward_hook(output_hook("conv_in")))
+    for index, block in enumerate(dual.down_blocks):
+        hooks.append(block.register_forward_hook(output_hook(f"down_{index}")))
+    hooks.append(dual.mid_block.register_forward_hook(output_hook("mid")))
 
     for block_index in (0, 1, 2):
         block = dual.up_blocks[block_index]
@@ -166,6 +172,7 @@ def run_mlx(args, inputs):
     from mlx_unet import HunyuanInnerUNet
     from mlx_utils import _tree_map_to_f32, load_reference_weights_from_pytorch
 
+    mx.set_cache_limit(1024 ** 3)
     model = HunyuanInnerUNet(input_channels=4, transformer_norm_eps=args.transformer_norm_eps)
     mapped = load_reference_weights_from_pytorch(model, str(args.checkpoint))
     model.update(_tree_map_to_f32(model.parameters()))
@@ -194,7 +201,7 @@ def run_mlx(args, inputs):
     cache = {}
     result = model(sample, timestep, encoder, num_in_batch=1,
                    condition_embed_dict={}, dino_hidden_states=None,
-                   mode="w", reference_cache=cache)
+                   mode="w", reference_cache=cache, debug_trace=trace)
     mx.eval([result, *cache.values()])
     return {"mapped_weights": mapped, "cache_layers": len(cache),
             "reference_write_shape": list(result.shape), "precision": "fp32",

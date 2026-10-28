@@ -259,6 +259,13 @@ NRMSE `0.004855`（主干半部 `0.004952`、skip 半部 `0.004619`），ResNet
 `HANDOFF-r3-reference-resnet-boundary-20261028.md`，下一步追踪
 `up_1.0` attention 到 concat 以及 `up_1.1` attention1/FF 的同输入算子。
 
+新增 coarse boundary trace 已把当前 resident 失败输入的首次可观测分叉前移到
+`conv_in → down_0`：`conv_in` 逐元素一致，`down_0` NRMSE `0.004971`，之后
+`mid` `0.005589`、`up_0.output` `0.006143`。详见
+`HANDOFF-r3-reference-coarse-boundary-20261028.md` 和
+`docs/r3-reference-coarse-boundary-20261028.json`；下一步拆 `down_0` 的两个
+ResNet 与 attention。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。

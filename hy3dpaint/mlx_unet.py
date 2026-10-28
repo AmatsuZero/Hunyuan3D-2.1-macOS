@@ -821,16 +821,24 @@ class HunyuanInnerUNet(nn.Module):
             debug_trace("down_0", x)
         residuals.extend(states)
         x, states = self.down_block_1(x, temb, **attn_kwargs)
+        if debug_trace is not None:
+            debug_trace("down_1", x)
         residuals.extend(states)
         x, states = self.down_block_2(x, temb, **attn_kwargs)
+        if debug_trace is not None:
+            debug_trace("down_2", x)
         residuals.extend(states)
         x, states = self.down_block_3(x, temb)
+        if debug_trace is not None:
+            debug_trace("down_3", x)
         residuals.extend(states)
 
         # Mid
         x = self.mid_resnet_0(x, temb)
         x = self.mid_attn(x, **attn_kwargs)
         x = self.mid_resnet_1(x, temb)
+        if debug_trace is not None:
+            debug_trace("mid", x)
 
         # Up
         x = self.up_block_0(x, temb, residuals=residuals)
