@@ -220,6 +220,12 @@ reference 路径，暂停扩大 outer condition/VAE 边界。
 
 当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 三轮旧/新版栈级性能/内存样本完成，但 Torch-only 归因、安全内存与默认切换仍未通过；R1 inner UNet 权重 bundle 的 Torch-free strict load 完成；R2 RealESRGAN 独立试点因性能回退未切默认；R3 inner UNet bundle、独立 UniPC scheduler replay、DINO projector 对照、外层条件权重 bundle、真实 reference/cache 合同、opt-in first-step 15 步运行、CFG+UniPC replay 和 opt-in resident loop 切片通过，完整 R3 迁移未完成；DINO projector consumer、position indices producer/consumer、opt-in MLX reference forward 及独立 reference fp32/cache dtype 切片已通过先前精确输入 replay，但本轮真实 resident 遮挡输入的 reference/15 步质量门槛失败，暂停扩大边界；性能、安全内存和默认切换仍开放。
 
+本轮追加 reference 输入敏感性诊断见
+`HANDOFF-r3-reference-input-sensitivity-20261028.md`：遮挡失败的误差首次在
+`up_2_0_0` 明显越门槛；正式 fp32 输入/cache fp16 与离线参数 fp32 合同在同一输入下
+结果几乎相同，输入 dtype 不是主因。旧 coverage 精确输入仍通过，下一步需逐层 trace
+定位上采样路径中的首个算子差异。默认 MLX reference 路径仍不切换。
+
 ## 9. 可复制验证命令
 
 工作目录均为 `/Users/daubert/Github/hy3d-torch-upgrade`。
