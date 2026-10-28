@@ -192,6 +192,8 @@ R3 outer DINO projector 已增加 bundle-backed MLX adapter 作为 opt-in consum
 
 R3 position voxel indices 已加入 opt-in MLX producer/consumer；真实四分辨率 cache 数值、首步输出及 12 张图与 DINO-only resident 基线逐元素相同，详见 `HANDOFF-r3-position-indices-20261028.md`。dynamic reference-write 及外层条件 embedding 仍待迁移，默认路径未切换。
 
+R3 动态 reference cache 已建立 opt-in MLX 边界与请求 reset 合同；真实 16 层 cache、首步和 12 张图与 position-indices 基线逐元素/逐字节相同，详见 `HANDOFF-r3-reference-cache-boundary-20261028.md`。`unet_dual` 的 reference forward 仍是 Torch/MPS；真正 MLX producer、逐层数值和质量/性能验收仍待完成。
+
 当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 三轮旧/新版栈级性能/内存样本完成，但 Torch-only 归因、安全内存与默认切换仍未通过；R1 inner UNet 权重 bundle 的 Torch-free strict load 完成；R2 RealESRGAN 独立试点因性能回退未切默认；R3 inner UNet bundle、独立 UniPC scheduler replay、DINO projector 对照、外层条件权重 bundle、真实 reference/cache 合同、opt-in first-step 15 步运行、CFG+UniPC replay 和 opt-in resident loop 切片通过，完整 R3 迁移未完成；DINO projector consumer 与 position indices producer/consumer 已通过，reference cache producer 仍开放。
 
 ## 9. 可复制验证命令

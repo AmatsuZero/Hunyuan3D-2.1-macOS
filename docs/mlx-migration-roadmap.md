@@ -240,6 +240,10 @@ outer DINO projector 已通过 opt-in bundle-backed MLX adapter 接入并完成�
 position voxel indices 的 opt-in MLX producer/consumer 已通过四分辨率数值、首步
 输出及 12 张原图逐元素对照（见 `HANDOFF-r3-position-indices-20261028.md`）；
 dynamic reference-write 和外层条件 embedding 仍使用 Torch。
+动态 reference cache 已有 opt-in MLX 转换与 reset 边界，16 层 cache 和 15 步
+固定条件原图保持逐元素/逐字节一致（见
+`HANDOFF-r3-reference-cache-boundary-20261028.md`）。这仍由 Torch `unet_dual`
+生成 reference states，下一阶段需真正 MLX reference forward 才能移除该依赖。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。
 当前已验收代码、Torch 升级风险和颜色缺陷分别见同目录的

@@ -411,6 +411,7 @@ def stage_capture(args):
             "enabled": True,
             "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
             "position_indices_mlx": os.environ.get("HUNYUAN_MLX_POSITION_INDICES") == "1",
+            "reference_cache_mlx": os.environ.get("HUNYUAN_MLX_REFERENCE_CACHE") == "1",
             "trace_dir": os.environ.get("HUNYUAN_MLX_RESIDENT_TRACE_DIR"),
         }
 

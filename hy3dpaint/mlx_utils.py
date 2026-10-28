@@ -24,8 +24,10 @@ import mlx.nn as mlx_nn
 
 try:
     from .mlx_unet import HunyuanInnerUNet
+    from .mlx_reference_cache import MLXReferenceCacheProducer
 except ImportError:
     from mlx_unet import HunyuanInnerUNet
+    from mlx_reference_cache import MLXReferenceCacheProducer
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -292,6 +294,7 @@ class MLXDispatchUNet(torch.nn.Module):
         self._mlx_dtype = mx.float32 if use_fp32 else mx.float16
         self._gen_call_count = 0
         self._cached_mlx = None  # Pre-converted MLX arrays
+        self._reference_cache_producer = MLXReferenceCacheProducer()
 
     def __getattr__(self, name):
         try:
@@ -475,9 +478,15 @@ class MLXDispatchUNet(torch.nn.Module):
 
         # Condition embed dict
         cond_dict = cross_attn.get("condition_embed_dict", {})
-        cached["condition_embed_dict"] = {
-            name: to_mlx(tensor) for name, tensor in cond_dict.items()
-        }
+        if os.environ.get("HUNYUAN_MLX_REFERENCE_CACHE") == "1":
+            cached["condition_embed_dict"] = self._reference_cache_producer.produce(
+                cond_dict, dtype=dtype
+            )
+            cached["reference_cache_producer"] = "mlx-boundary"
+        else:
+            cached["condition_embed_dict"] = {
+                name: to_mlx(tensor) for name, tensor in cond_dict.items()
+            }
 
         # Position voxel indices (int32, no upcast needed)
         pvox = cross_attn.get("position_voxel_indices", {})
@@ -557,6 +566,7 @@ class MLXDispatchUNet(torch.nn.Module):
         """Reset for new denoising run."""
         self._gen_call_count = 0
         self._cached_mlx = None
+        self._reference_cache_producer.reset()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
