@@ -29,18 +29,16 @@ fp16。此实验只改变 MLX 参数/随后计算的精度，不是全流水线 
 ## 结论与下一优先级
 
 两组超限对提高 MLX reference 参数精度敏感；这支持精度造成差异的解释，还未定位
-某个具体算子，也不能证明 fp16 kernel 有缺陷。当前模型尚无独立的 reference fp32
+某个具体算子，也不能证明 fp16 kernel 有缺陷。本诊断阶段模型尚无独立的 reference fp32
 开关，已有 `HUNYUAN_MLX_FP32=1` 同时影响 generation inner UNet，不能用作默认修复。
 
-下一会话：
+下一会话（已在后续阶段完成独立开关的代码切片）：
 
 1. 先核对总交接、当前 HEAD、进程与队列；保护根目录 `torchvision_fix.py` 和交付资产。
-2. 增加独立 opt-in reference fp32 配置，generation inner UNet 仍保持 fp16。检查
-   native reference cache 在 consumer 边界转回 dispatch dtype，避免意外把后续
-   generation 计算提升为 float32。补精度/reset 合同测试。
-3. 使用同一两组输入验证转回 fp16 cache 后仍通过门槛，再跑完整 15 步图像和同实例
-   reset。记录内存与耗时；未完成这些验收前不切默认。
-4. 完成后写新交接、提交推送，再按用户授权创建新会话。先前接力任务已因 429 终止。
+2. 独立 reference fp32 配置、fp16 cache consumer 和 reset 合同已完成，详见
+   `HANDOFF-r3-reference-fp32-consumer-20261028.md`；下一步是完整 15 步图像、内存
+   和性能验收。未完成前不切默认。
+3. 完成后写新交接、提交推送，再按用户授权创建新会话。先前接力任务已因 429 终止。
 
 ## 复现
 

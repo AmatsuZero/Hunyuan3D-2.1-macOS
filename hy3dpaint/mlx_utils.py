@@ -406,6 +406,7 @@ class MLXDispatchUNet(torch.nn.Module):
         self._cached_mlx = None  # Pre-converted MLX arrays
         self._reference_cache_producer = MLXReferenceCacheProducer()
         self._reference_model = None
+        self._reference_dtype = self._mlx_dtype
         self._pending_reference_cache = None
 
     def __getattr__(self, name):
@@ -619,16 +620,17 @@ class MLXDispatchUNet(torch.nn.Module):
         precision = "fp32" if self._use_fp32 else "fp16"
         print(f"  [MLX] Cached {len(cached)} inputs for steps 2-15 ({precision})")
 
-    def set_reference_model(self, model):
+    def set_reference_model(self, model, use_fp32=False):
         self._reference_model = model
+        self._reference_dtype = mx.float32 if use_fp32 else self._mlx_dtype
 
     def reference_forward_mlx(self, sample, timestep, encoder_hidden_states,
                               num_in_batch):
         if self._reference_model is None:
             raise RuntimeError("MLX reference model is not initialized")
-        sample_mlx = _pt_to_mx(sample).astype(self._mlx_dtype)
-        encoder_mlx = _pt_to_mx(encoder_hidden_states).astype(self._mlx_dtype)
-        timestep_mlx = mx.array([timestep], dtype=self._mlx_dtype)
+        sample_mlx = _pt_to_mx(sample).astype(self._reference_dtype)
+        encoder_mlx = _pt_to_mx(encoder_hidden_states).astype(self._reference_dtype)
+        timestep_mlx = mx.array([timestep], dtype=self._reference_dtype)
         cache = {}
         output = self._reference_model(
             sample_mlx,
@@ -640,6 +642,8 @@ class MLXDispatchUNet(torch.nn.Module):
             mode="w",
             reference_cache=cache,
         )
+        # Keep reference precision independent from the generation consumer.
+        cache = {name: value.astype(self._mlx_dtype) for name, value in cache.items()}
         mx.eval([output, *cache.values()])
         self._pending_reference_cache = cache
         produced = {
@@ -873,14 +877,16 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
         print("  [MLX] Building dual reference UNet...")
         reference_model = HunyuanInnerUNet(input_channels=4)
         loaded = load_reference_weights_from_pytorch(reference_model, ckpt_path)
-        if use_fp32:
+        reference_use_fp32 = use_fp32 or os.environ.get("HUNYUAN_MLX_REFERENCE_FP32") == "1"
+        if reference_use_fp32:
             reference_model.update(_tree_map_to_f32(reference_model.parameters()))
         mx.eval(reference_model.parameters())
-        dispatch.set_reference_model(reference_model)
+        dispatch.set_reference_model(reference_model, use_fp32=reference_use_fp32)
         outer_unet.unet_dual = _MLXReferenceUNetWrapper(
             outer_unet.unet_dual, dispatch
         ).eval()
-        print(f"  [MLX] Dual reference weights loaded ({loaded} tensors)")
+        reference_precision = "fp32" if reference_use_fp32 else "fp16"
+        print(f"  [MLX] Dual reference weights loaded ({loaded} tensors, {reference_precision})")
 
     print(f"  [MLX] Inner UNet replaced with MLX dispatch wrapper")
     if projector_installed:

@@ -257,6 +257,8 @@ opt-in MLX `unet_dual` reference forward 现已完成权重映射、逐层 repla
 两组失败输入随后在 MLX reference fp32 参数 replay 中均通过原门槛；下一步验证
 独立 reference fp32 opt-in 的 cache dtype、15 步图像、reset 与内存性能合同，见
 `HANDOFF-r3-reference-fp32-diagnostic-20261028.md`。
+独立 reference fp32 已完成两组超限输入的 fp16 consumer replay 与 reset 对照，
+实现见 `HANDOFF-r3-reference-fp32-consumer-20261028.md`；完整 15 步和性能仍未验收。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。
 当前已验收代码、Torch 升级风险和颜色缺陷分别见同目录的

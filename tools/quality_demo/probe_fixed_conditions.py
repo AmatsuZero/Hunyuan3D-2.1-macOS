@@ -413,6 +413,7 @@ def stage_capture(args):
             "position_indices_mlx": os.environ.get("HUNYUAN_MLX_POSITION_INDICES") == "1",
             "reference_cache_mlx": os.environ.get("HUNYUAN_MLX_REFERENCE_CACHE") == "1",
             "reference_forward_mlx": os.environ.get("HUNYUAN_MLX_REFERENCE_FORWARD") == "1",
+            "reference_fp32_requested": os.environ.get("HUNYUAN_MLX_REFERENCE_FP32") == "1",
             "trace_dir": os.environ.get("HUNYUAN_MLX_RESIDENT_TRACE_DIR"),
         }
 
@@ -445,6 +446,8 @@ def stage_capture(args):
             "fp32": bool(getattr(mlx_dispatch, "_use_fp32", False)),
             "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
             "reference_forward_mlx": os.environ.get("HUNYUAN_MLX_REFERENCE_FORWARD") == "1",
+            "reference_dtype": str(mlx_dispatch._reference_dtype),
+            "generation_dtype": str(mlx_dispatch._mlx_dtype),
             "outer_dino_projector": type(pipe.unet.image_proj_model_dino).__module__ + "." +
                                     type(pipe.unet.image_proj_model_dino).__name__,
             "reference_unet": type(pipe.unet.unet_dual).__module__ + "." +

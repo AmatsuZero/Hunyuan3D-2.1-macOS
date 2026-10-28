@@ -207,7 +207,12 @@ NRMSE 分别为 `0.006395`、`0.006528`，write 为 `0.023046`、`0.021966`。�
 `HANDOFF-r3-reference-fp32-diagnostic-20261028.md`。下一优先级是独立 reference fp32
 opt-in、cache consumer dtype 合同及完整 15 步/reset 验收；正式 dispatch 尚未改变。
 
-当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 三轮旧/新版栈级性能/内存样本完成，但 Torch-only 归因、安全内存与默认切换仍未通过；R1 inner UNet 权重 bundle 的 Torch-free strict load 完成；R2 RealESRGAN 独立试点因性能回退未切默认；R3 inner UNet bundle、独立 UniPC scheduler replay、DINO projector 对照、外层条件权重 bundle、真实 reference/cache 合同、opt-in first-step 15 步运行、CFG+UniPC replay 和 opt-in resident loop 切片通过，完整 R3 迁移未完成；DINO projector consumer、position indices producer/consumer、opt-in MLX reference forward 与首版固定条件门槛已通过，但遮挡/384px reference replay 超出 cache 门槛，更广输入验收、outer Torch 条件边界仍开放。
+独立 reference fp32 opt-in 已实现：`HUNYUAN_MLX_REFERENCE_FP32=1` 只提升
+`unet_dual` reference，native cache 在 consumer 边界回到 generation fp16。两组超限
+输入的集成 replay 均通过（最大 cache `0.006399/0.006531`），reset 合同通过；详见
+`HANDOFF-r3-reference-fp32-consumer-20261028.md`。完整 15 步图像和性能验收仍开放。
+
+当前阶段判定：P0/P1 完成；P2 placement/calls 与命名 Torch-only trace 通过（不是全流水线全 GPU）；P3 bounded ops 与真实 bake CPU 例外验证/移除完成；**P4 颜色——旧版全黑、候选 hybrid 染红和随机漂移根因均已定位修复，最终固定条件颜色及重复性复验通过，run 09 完整 GLB 结构与本地 Blender 四视图已核对，用户设备/独立 3D 资产验收未完成**；P5 三轮旧/新版栈级性能/内存样本完成，但 Torch-only 归因、安全内存与默认切换仍未通过；R1 inner UNet 权重 bundle 的 Torch-free strict load 完成；R2 RealESRGAN 独立试点因性能回退未切默认；R3 inner UNet bundle、独立 UniPC scheduler replay、DINO projector 对照、外层条件权重 bundle、真实 reference/cache 合同、opt-in first-step 15 步运行、CFG+UniPC replay 和 opt-in resident loop 切片通过，完整 R3 迁移未完成；DINO projector consumer、position indices producer/consumer、opt-in MLX reference forward、首版门槛及独立 reference fp32/cache dtype 切片已通过当前 reference replay，但完整 15 步图像、性能和默认切换仍开放。
 
 ## 9. 可复制验证命令
 
