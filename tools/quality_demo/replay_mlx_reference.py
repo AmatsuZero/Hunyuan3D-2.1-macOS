@@ -13,7 +13,7 @@ PROJECT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT / "hy3dpaint"))
 
 from mlx_unet import HunyuanInnerUNet  # noqa: E402
-from mlx_utils import load_reference_weights_from_pytorch  # noqa: E402
+from mlx_utils import _tree_map_to_f32, load_reference_weights_from_pytorch  # noqa: E402
 
 
 LAYERS = (
@@ -52,6 +52,8 @@ def main():
     parser.add_argument("--torch-reference", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--fp32", action="store_true",
+                        help="cast loaded MLX model parameters to float32 before replay")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output already exists")
@@ -72,6 +74,8 @@ def main():
     encoder = mx.array(np.load(args.capture / "reference_encoder_hidden_states.npy"))
     model = HunyuanInnerUNet(input_channels=4)
     mapped = load_reference_weights_from_pytorch(model, str(args.checkpoint))
+    if args.fp32:
+        model.update(_tree_map_to_f32(model.parameters()))
     mx.eval(model.parameters())
     cache = {}
     output = model(
@@ -89,6 +93,7 @@ def main():
         "checkpoint_sha256": sha256_file(args.checkpoint),
         "inputs_exact": True,
         "mapped_weights": mapped,
+        "precision": "fp32" if args.fp32 else "fp16",
         "layers": {},
     }
     for name in LAYERS:
