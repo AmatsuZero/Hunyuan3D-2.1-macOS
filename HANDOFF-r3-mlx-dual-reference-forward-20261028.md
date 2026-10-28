@@ -27,7 +27,12 @@
   个 `unet_dual` 权重键全部映射。
 - 16 层 cache 的最大 NRMSE `0.006852`（`up_3_2_0`），最大 mean abs `0.002531`；
   `reference_write` 输出 NRMSE `0.026349`。这是 fp16 MLX 与 Torch/MPS 的数值近似，
-  **不是逐元素 parity**，报告保留全部层指标供后续容差决策。
+  **不是逐元素 parity**；当前报告已通过工程门槛，全部层指标仍保留供后续 replay。
+- 已加入离线门槛工具 `tools/quality_demo/validate_mlx_reference_report.py`：默认
+  要求所有 cache 层最大 NRMSE ≤ `0.01`、`reference_write` NRMSE ≤ `0.03`，并拒绝
+  输入不等、checkpoint SHA/686 权重键或 16 层结构漂移。这两个值是当前单一固定条件
+  报告上方的工程验收门槛，不代表
+  已完成遮挡或多分辨率质量验收；后续 replay 若超门槛必须停在 opt-in 路径。
 
 ### 15 步集成与 reset
 
@@ -46,8 +51,19 @@
 - 这是 opt-in 实验路径，仍把 MLX cache 转回 Torch 供 outer wrapper 合同使用；
   outer generation、DINO/VAE 和最终解码仍未 Torch-free。未切换默认，也未声称
   全 MLX 或 Torch-free 正式运行时。
-- 后续应冻结 reference cache 数值容差，确认更多遮挡/分辨率与用户设备质量，
-  再评估是否保留该 opt-in；默认路径继续使用已验证 Torch reference producer。
+- 当前已冻结首版工程门槛（cache `0.01`、reference write `0.03`），仍需确认更多
+  遮挡/分辨率与用户设备质量，再评估是否保留该 opt-in；默认路径继续使用已验证
+  Torch reference producer。
+
+本阶段验证命令（不启动 GPU）：
+
+```sh
+rtk proxy /Users/daubert/Github/.venvs/hunyuan3d-torch-upgrade/bin/python \
+  tools/quality_demo/validate_mlx_reference_report.py \
+  --report /Users/daubert/Github/hy3d-upgrade-evidence/20261028/r3-mlx-reference-replay-01/exact-input-hashed-metrics.json
+```
+
+预期 `passed=true`；当前报告的观测值为 `0.006851671...` 与 `0.026348907...`。
 
 ## 复现开关
 
@@ -63,10 +79,10 @@ GPU 进程和 ComfyUI queue；保护 `torchvision_fix.py`、已交付 GLB 及原
 
 ## 下一会话入口
 
-- 当前分支 `codex/torch-mps-upgrade`，本阶段基于 `179dc40`；提交后以
+- 当前分支 `codex/torch-mps-upgrade`，本阶段基于 `1c3c48b`；提交后以
   `git log -1` 和 `git ls-remote fork refs/heads/codex/torch-mps-upgrade` 核对推送。
-- 优先审查并定义 reference cache 数值容差，再补有遮挡输入及其他支持分辨率的
-  相同输入 replay；通过后继续 outer condition/VAE/最终 Torch 边界迁移。
+- 优先补有遮挡输入及其他支持分辨率的相同输入 replay，并用上述门槛逐份判定；
+  通过后继续 outer condition/VAE/最终 Torch 边界迁移。
 - 运行前核对进程和 ComfyUI 空队列，单次仅一项 GPU 推理；新证据写 fresh 目录。
 - 本次交接前重新执行宿主 Metal 全量测试 `75/75`、语法编译和 diff 检查通过。
   受限 shell 测试在 MLX 导入时 exit 134，宿主复验通过；独立 reviewer 因服务

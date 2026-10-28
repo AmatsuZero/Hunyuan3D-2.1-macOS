@@ -248,6 +248,9 @@ opt-in MLX `unet_dual` reference forward 现已完成权重映射、逐层 repla
 集成和同实例 reset；误差与边界见
 `HANDOFF-r3-mlx-dual-reference-forward-20261028.md`。该路径仍是 fp16 近似、
 未切默认，且 outer Torch 条件合同尚未移除。
+当前固定条件的首版工程门槛为 cache 最大 NRMSE `0.01`、reference write NRMSE
+`0.03`，由 `tools/quality_demo/validate_mlx_reference_report.py` 执行；它不替代
+遮挡、多分辨率和视觉验收。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。
 当前已验收代码、Torch 升级风险和颜色缺陷分别见同目录的
