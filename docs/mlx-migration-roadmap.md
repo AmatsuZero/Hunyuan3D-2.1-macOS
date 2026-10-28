@@ -234,6 +234,9 @@ MLX latent、CFG、UniPC 和 inner UNet 直接连接，并完成真实 15 步固
 `HANDOFF-r3-direct-first-output-20261028.md`）。outer reference/条件生产、
 首步 sample 输入及最终 VAE 仍依赖 Torch，因此“全 MLX 推理”仍未完成。上面的性能
 收益均为待证假设，不能据现有代码注释的 SDPA 倍数推算最终速度。
+outer DINO projector 已通过 opt-in bundle-backed MLX adapter 接入并完成单步和
+15 步原图对照（见 `HANDOFF-r3-dino-projector-consumer-20261028.md`）；outer Torch
+接口仍需两次 NumPy 同步，不能把该切片写成 Torch-free outer 条件生产。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。
 当前已验收代码、Torch 升级风险和颜色缺陷分别见同目录的

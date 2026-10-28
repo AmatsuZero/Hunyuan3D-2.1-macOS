@@ -48,7 +48,7 @@ rtk proxy env PYTHONUNBUFFERED=1 PYTORCH_ENABLE_MPS_FALLBACK=0 \
   --steps 15 --stop-after 0 \
   --initial-noise /Users/daubert/Github/hy3d-upgrade-evidence/20261027/color-diagnosis/initial-noise-torch251-seed0.npy \
   --guidance-scale 3 --reference-scale 1 --mva-scale 1 \
-  --mlx --mlx-cache-limit-mib 1024
+  --mlx --capture-cache --mlx-cache-limit-mib 1024
 ```
 
 ## 代码验证

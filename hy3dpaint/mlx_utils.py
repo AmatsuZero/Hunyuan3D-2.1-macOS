@@ -650,9 +650,16 @@ def setup_mlx_dispatch(pipeline) -> Optional[MLXDispatchUNet]:
     outer_unet = pipeline.unet
     original_inner = outer_unet.unet
     dispatch = MLXDispatchUNet(original_inner, mlx_model, use_fp32=use_fp32)
+    try:
+        from .mlx_dino_torch_adapter import install_mlx_dino_projector
+    except ImportError:
+        from mlx_dino_torch_adapter import install_mlx_dino_projector
+    projector_installed = install_mlx_dino_projector(outer_unet, ckpt_path)
     outer_unet.unet = dispatch
 
     print(f"  [MLX] Inner UNet replaced with MLX dispatch wrapper")
+    if projector_installed:
+        print("  [MLX] Outer DINO projector replaced with bundle-backed MLX adapter")
     if os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1":
         print(f"  [MLX] Steps 1-15: MLX Metal (opt-in first-step mode)")
     else:

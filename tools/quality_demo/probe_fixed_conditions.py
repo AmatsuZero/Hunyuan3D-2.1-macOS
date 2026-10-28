@@ -432,7 +432,16 @@ def stage_capture(args):
             "enabled": True,
             "fp32": bool(getattr(mlx_dispatch, "_use_fp32", False)),
             "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
+            "outer_dino_projector": type(pipe.unet.image_proj_model_dino).__module__ + "." +
+                                    type(pipe.unet.image_proj_model_dino).__name__,
         }
+        dino_projector = pipe.unet.image_proj_model_dino
+        if hasattr(dino_projector, "bundle_path"):
+            report["mlx_dispatch"].update({
+                "outer_dino_projector_bundle": dino_projector.bundle_path,
+                "outer_dino_projector_source_sha256": dino_projector.source_sha256,
+                "outer_dino_projector_config_sha256": dino_projector.config_sha256,
+            })
 
     injected = {}
     if args.inject:
