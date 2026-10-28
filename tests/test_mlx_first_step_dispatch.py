@@ -5,6 +5,7 @@ from unittest import mock
 import unittest
 
 import torch
+import mlx.core as mx
 
 
 class _Original(torch.nn.Module):
@@ -18,6 +19,33 @@ class _Original(torch.nn.Module):
 
 
 class MLXFirstStepDispatchTests(unittest.TestCase):
+    def test_direct_mlx_forward_keeps_arrays_in_mlx(self):
+        from hy3dpaint.mlx_utils import MLXDispatchUNet
+
+        class Model:
+            def __call__(self, sample, timestep, encoder, **kwargs):
+                self.received = (sample, timestep, encoder, kwargs)
+                return mx.zeros((1, 4, 2, 2), dtype=sample.dtype)
+
+        model = Model()
+        dispatch = MLXDispatchUNet(_Original(), model)
+        dispatch._cached_mlx = {
+            "encoder_hs": mx.zeros((1, 77, 1024), dtype=mx.float16),
+            "num_in_batch": 1,
+            "condition_embed_dict": {"layer": mx.zeros((1, 4, 320))},
+            "dino_hs": mx.zeros((1, 4, 1024)),
+            "position_voxel_indices": {},
+            "ref_scale": 1.0,
+            "mva_scale": 1.0,
+        }
+        sample = mx.ones((1, 12, 2, 2), dtype=mx.float16)
+        timestep = mx.array([999])
+        with mock.patch("hy3dpaint.mlx_utils._pt_to_mx", side_effect=AssertionError("Torch bridge")):
+            result = dispatch.forward_mlx(sample, timestep)
+        self.assertIsInstance(result, mx.array)
+        self.assertIs(model.received[0], sample)
+        self.assertIs(model.received[2], dispatch._cached_mlx["encoder_hs"])
+
     def test_opt_in_runs_first_generation_in_mlx_and_resets(self):
         from hy3dpaint.mlx_utils import MLXDispatchUNet
 

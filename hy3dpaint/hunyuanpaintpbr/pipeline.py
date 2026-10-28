@@ -12,6 +12,7 @@
 # fine-tuning enabling code and other elements of the foregoing made publicly available
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
 
+import os
 from typing import Any, Dict, Optional
 from diffusers.models import AutoencoderKL, UNet2DConditionModel
 from diffusers.schedulers import KarrasDiffusionSchedulers
@@ -633,6 +634,26 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
         # 7. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
+        resident_mlx = os.environ.get("HUNYUAN_MLX_RESIDENT_LOOP") == "1"
+        if resident_mlx:
+            dispatch = getattr(self.unet, "unet", None)
+            if (self.device.type != "mps" or dispatch is None or
+                    not hasattr(dispatch, "forward_mlx") or
+                    os.environ.get("HUNYUAN_MLX_FIRST_STEP") != "1"):
+                raise RuntimeError("MLX resident loop requires MPS dispatch and HUNYUAN_MLX_FIRST_STEP=1")
+            if (self.scheduler.__class__.__name__ != "UniPCMultistepScheduler" or
+                    not self.do_classifier_free_guidance or self.guidance_rescale or
+                    n_pbr != 2 or added_cond_kwargs is not None or timestep_cond is not None or
+                    callback_on_step_end is not None or callback is not None or
+                    extra_step_kwargs or len(timesteps) != num_inference_steps or
+                    "embeds_normal" not in kwargs or "embeds_position" not in kwargs or
+                    getattr(dispatch, "_use_fp32", False)):
+                raise ValueError("unsupported paint configuration for MLX resident loop")
+            if self.scheduler.scale_model_input(latents, timesteps[0]) is not latents:
+                raise ValueError("MLX resident loop requires identity UniPC input scaling")
+            # Direct pipeline callers do not pass through textureGenPipeline's
+            # per-request reset. Start with fresh reference and position data.
+            dispatch.reset()
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
@@ -663,6 +684,25 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
                     **kwargs,
                 )[0]
                 latents = rearrange(latents, "b n_pbr n c h w -> (b n_pbr n) c h w")
+                if resident_mlx:
+                    from mlx_resident_denoise import run_mlx_denoise
+
+                    latents = run_mlx_denoise(
+                        dispatch,
+                        latents[:, :num_channels_latents, :, :],
+                        noise_pred,
+                        timesteps=timesteps,
+                        scheduler_config=dict(self.scheduler.config),
+                        embeds_normal=kwargs["embeds_normal"],
+                        embeds_position=kwargs["embeds_position"],
+                        guidance_scale=self.guidance_scale,
+                        camera_azims=kwargs.get("camera_azims", [0] * kwargs["num_in_batch"]),
+                        pbr_views=n_pbr,
+                        views=kwargs["num_in_batch"],
+                        interrupted=lambda: self.interrupt,
+                    )
+                    progress_bar.update(num_inference_steps)
+                    break
                 # perform guidance
                 if self.do_classifier_free_guidance:
                     # noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)

@@ -504,6 +504,32 @@ class MLXDispatchUNet(torch.nn.Module):
         # Return as tuple (matching inner UNet return format)
         return (output_pt,)
 
+    def forward_mlx(self, sample, timestep, debug_trace=None):
+        """Run the cached inner model entirely with MLX arrays.
+
+        This is used by the opt-in resident denoise loop after the outer Torch
+        call has populated the request-local reference and position caches.
+        Unlike ``_mlx_forward``, it does not cross the Torch boundary or wrap
+        the result in a Diffusers tuple.
+        """
+        if self._cached_mlx is None:
+            raise RuntimeError("MLX cache is not initialized; run the outer first step first")
+        c = self._cached_mlx
+        output = self._mlx_model(
+            sample,
+            timestep,
+            c["encoder_hs"],
+            num_in_batch=c["num_in_batch"],
+            condition_embed_dict=c["condition_embed_dict"],
+            dino_hidden_states=c.get("dino_hs"),
+            position_voxel_indices=c["position_voxel_indices"],
+            ref_scale=c["ref_scale"],
+            mva_scale=c["mva_scale"],
+            debug_trace=debug_trace,
+        )
+        mx.eval(output)
+        return output
+
     def reset(self):
         """Reset for new denoising run."""
         self._gen_call_count = 0

@@ -397,6 +397,12 @@ def stage_capture(args):
               "reference_scale": args.reference_scale, "mva_scale": args.mva_scale,
               "cameras": cameras,
               "records": [], "notes": [], "trace_stage": args.trace_stage}
+    if os.environ.get("HUNYUAN_MLX_RESIDENT_LOOP") == "1":
+        report["mlx_resident_loop"] = {
+            "enabled": True,
+            "first_step_mlx": os.environ.get("HUNYUAN_MLX_FIRST_STEP") == "1",
+            "trace_dir": os.environ.get("HUNYUAN_MLX_RESIDENT_TRACE_DIR"),
+        }
 
     pipe = HunyuanPaintPipeline.from_pretrained(args.model_dir, torch_dtype=torch.float16)
     report["runtime_sources"] = runtime_sources(pipe, args.model_dir)
@@ -586,6 +592,35 @@ def stage_capture(args):
         report["elapsed_s"] = time.perf_counter() - started
     report["warnings"] = [str(item.message) for item in caught][:200]
 
+    if args.repeat_request:
+        if result is None or args.stop_after or args.ambient_posterior or injected:
+            raise ValueError("repeat-request requires a complete fixed-posterior capture")
+        first_images = [np.asarray(image) for image in result.images]
+        first_reference = {
+            name: value.numpy().copy()
+            for name, value in captured.get("condition_embed_dict", {}).items()
+        }
+        first_gen_count = getattr(getattr(pipe.unet, "unet", None), "_gen_call_count", None)
+        encode_state["count"] = 0
+        repeat_started = time.perf_counter()
+        repeated = pipe([reference], prompt="high quality", num_inference_steps=args.steps,
+                        sync_condition=None, guidance_scale=args.guidance_scale,
+                        reference_scale=args.reference_scale, **kwargs)
+        second_images = [np.asarray(image) for image in repeated.images]
+        image_differences = [np.abs(left.astype(np.int16) - right.astype(np.int16))
+                             for left, right in zip(first_images, second_images)]
+        second_reference = captured.get("condition_embed_dict", {})
+        report["same_instance_repeat"] = {
+            "elapsed_s": time.perf_counter() - repeat_started,
+            "first_gen_count": first_gen_count,
+            "second_gen_count": getattr(getattr(pipe.unet, "unet", None), "_gen_call_count", None),
+            "images": len(second_images),
+            "max_image_abs": int(max(diff.max() for diff in image_differences)),
+            "reference_cache_exact": bool(first_reference and first_reference.keys() == second_reference.keys()
+                                          and all(np.array_equal(value, second_reference[name].numpy())
+                                                  for name, value in first_reference.items())),
+        }
+
     if result is not None and args.stop_after <= 0:
         images = result.images if hasattr(result, "images") else result
         for index, image in enumerate(images):
@@ -680,6 +715,8 @@ def main():
                         help="replace inner UNet with the repository MLX dispatch path")
     parser.add_argument("--capture-cache", action="store_true",
                         help="save first-request reference, position, and generation caches")
+    parser.add_argument("--repeat-request", action="store_true",
+                        help="run a second fixed request on the same pipeline instance and compare outputs")
     parser.add_argument("--mlx-cache-limit-mib", type=int, default=None,
                         help="set MLX idle cache limit for capture diagnostics")
     parser.add_argument("--fallback", choices=("0", "1"), default="0")
@@ -693,6 +730,11 @@ def main():
     args = parser.parse_args()
     if args.capture_cache and args.stage != "capture":
         parser.error("--capture-cache requires --stage capture")
+    if args.repeat_request and (args.stage != "capture" or args.stop_after != 0 or
+                                not args.initial_noise or not args.capture_cache or
+                                args.ambient_posterior or args.inject or
+                                os.environ.get("HUNYUAN_MLX_RESIDENT_TRACE_DIR")):
+        parser.error("--repeat-request requires full fixed capture, initial noise, cache capture, and no trace")
     if args.wait_for_file and args.trace_stage != "first_step":
         parser.error("--wait-for-file requires --trace-stage first_step")
     if args.trace_stage:
