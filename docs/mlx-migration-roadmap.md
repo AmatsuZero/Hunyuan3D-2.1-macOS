@@ -251,6 +251,9 @@ opt-in MLX `unet_dual` reference forward 现已完成权重映射、逐层 repla
 当前固定条件的首版工程门槛为 cache 最大 NRMSE `0.01`、reference write NRMSE
 `0.03`，由 `tools/quality_demo/validate_mlx_reference_report.py` 执行；它不替代
 遮挡、多分辨率和视觉验收。
+覆盖 replay 已验证 256px reference 通过；512px 中央遮挡和 384px reference 的
+后段 cache 超过 `0.01`，因此暂不扩大 opt-in 范围或切换默认路径。下一步先做 fp32
+和逐层 stage 诊断。
 框架转换与同步边界参考
 [MLX 官方文档](https://ml-explore.github.io/mlx/build/html/usage/numpy.html)。
 当前已验收代码、Torch 升级风险和颜色缺陷分别见同目录的
