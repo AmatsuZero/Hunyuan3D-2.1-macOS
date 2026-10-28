@@ -243,9 +243,9 @@ projection 重放与 Torch 捕获几乎逐元素一致，MLX 捕获差异仅 `0.
 自动审查 429 拒绝，流程证据标为未验证；默认路径和门槛继续冻结。
 
 现已将 `1e-6` 隔离接入 opt-in MLX reference，generation 默认仍为 `1e-5`；
-85/85 unittest 通过。新代码的冻结失败 sample replay 再次被自动审查 429 拒绝，
-因此尚无新质量 gate 结果。详见 `HANDOFF-r3-reference-epsilon-config-20261028.md`，
-不得据单元测试切默认 reference。
+85/85 unittest 通过。新会话在成功确认队列及进程后完成冻结失败 sample replay：
+最大 cache `0.0130166` 仍超过 `0.01`，write `0.0257892` 在 `0.03` 内。
+详见 `HANDOFF-r3-reference-epsilon-replay-20261028.md`；默认 reference 不切换。
 
 ## 9. 可复制验证命令
 
