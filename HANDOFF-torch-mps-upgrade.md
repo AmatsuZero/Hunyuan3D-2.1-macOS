@@ -519,3 +519,20 @@ step 14 的
 的 `0.052962/0.072279`，说明单点层误差大小不能直接解释图像超阈值。
 `43/255` 图像门槛仍失败，默认路径不切换。下一步优先对现有归档做 CPU-only
 step 0→3 输入/参考缓存差的因果拆分，再决定是否需要更窄的 GPU 实验。
+
+## 19. R3 occluded512 reference / Winograd 四路对照（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-four-way-reference-winograd-20261029.md`](HANDOFF-r3-occluded512-four-way-reference-winograd-20261029.md)。
+本阶段补齐 Torch reference + Winograd-disabled generation 的缺失组合，形成
+Torch/MLX reference × 默认/disabled Winograd 四路矩阵。四路 15 类输入全部
+逐元素 exact（合同 JSON SHA256
+`d095fc0d8c128c0d6e7356d175df3aeb5d79f482b3e14801f3410f19266dc2c9`）；
+新 D capture 已完整归档，SHA256
+`0e22b3ee4b1656b7199681404f7dc46392f4ca09ecace10e3ca04ec743f78e5a`。
+
+相对 Torch reference + 默认 Winograd：MLX reference/默认为 `79/255` 最大图像差，
+MLX reference/disabled 为 `43/255`，Torch reference/disabled 为 `66/255`。
+D 的 reference_write 与 Torch 默认 exact，但 generation 首步已出现差异；C/D
+在相同 disabled policy 下仍有 `42/255` 图像最大差。结论是 reference 和 Winograd
+都会影响轨迹且存在非加性交互，不能把 C 的较小差异单独归因于任一开关，默认路径
+继续不切换。四路摘要 JSON 的 SHA256 见阶段交接。
