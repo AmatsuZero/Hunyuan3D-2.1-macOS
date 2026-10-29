@@ -699,3 +699,19 @@ MLX fp16 resident generation，并通过 `consumer_exact`。
 证据归档 manifest（129 项）SHA256
 `06037adcb31686a2870c1ab73d11af6ee326c0228c5c0d84291982b80d64b094`。
 下一步优先做这两个层联合 swap 或按 block 分组 swap；默认路径保持不变。
+
+## 29. R3 occluded512 两层 reference cache 联合 swap（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-cache-joint-swap-20261029.md`](HANDOFF-r3-occluded512-cache-joint-swap-20261029.md)。
+在 C 的完整 16 层 cache 上同时替换 `down_0_0_0` 与 `up_2_2_0` 为 D，C 的其余
+14 层保持不变；完整 15 步 MLX fp16 resident capture 通过 `consumer_exact`，
+15 类冻结输入逐元素 exact。联合输出相对 C 的 image 5/image 11 最大差分别为
+`19/255`、`17/255`，相对 D 仍分别为 `43/255`、`36/255`；单层结果不能解释
+完整 C/D 差异，联合的 signed difference-in-differences 最大值为 `17`，说明存在
+多层交互。联合 `reference_write` 与 D 仍 NRMSE `0.0132010`。
+
+证据归档于 `/Users/daubert/Github/hy3d-upgrade-evidence/20261029/r3-cache-joint-layer-20261029/`，
+manifest SHA256 `73df44eb33d711316b37604c594c89b9a89250311908c1af45935ce664dcb1c7`；
+验证摘要 SHA256 `72902bd8ed1c9afc4da468b74555f96d5a44c88365ce00785477004def3a9444`。
+默认路径、Winograd policy 和已交付 GLB 均未改动。下一步转向 reference producer 的
+block 级最早分叉，或设停止判据的连续 block cache swap；仍保持单 GPU、fresh output。
