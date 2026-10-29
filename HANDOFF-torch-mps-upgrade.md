@@ -589,3 +589,25 @@ CPU 合并报告 SHA256 `de883e3ebb78a476a912ca372feac1e6daa5d53b4627fd1a75335a6
 `down_0_resnet_0.conv1` 都调用统一 `mx.conv2d`，权重布局转换相同。
 可读 checkout 是 MLX 0.32.3 dirty，而运行 wheel 是 0.32.4；因此这是机制
 证据，不是当前 binary 的逐字节 source proof。默认路径继续不切换。
+
+## 24. R3 full `down_0` / `conv1` CPU oracle（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-full-down0-oracle-20261029.md`](HANDOFF-r3-occluded512-full-down0-oracle-20261029.md)。
+空 ComfyUI queue 下串行完成 Torch reference 默认 Winograd 与 disabled Winograd
+两轮 fresh capture；各 12 张图与既有 A/D 归档逐字节 exact，两侧 frozen inputs、
+16 个 condition cache 和完整 `norm1` 全部 exact。新目录每侧 89 个文件，阶段
+摘要 `summary.json` SHA256 为
+`5f342ba07cbf48944334c281dd9400602ffa65ddc956f5729067d45a619014ff`。
+182 个归档文件逐文件 SHA256 回读核验通过，manifest SHA256
+`245b421cdf1eb9faff0318dd98e8754398fc32c324fb535d3d69e50a8fcb2568`。
+
+真正 step 1 的完整 `down_0_resnet_0.norm1`/`conv1` 为 `(36,64,64,320)`。同一
+`norm1` 输入上的完整 `conv1` 默认 vs disabled NRMSE `0.00388407`；generation
+`unet` 权重的 CPU float32 oracle 中，默认 Winograd NRMSE `0.00388886`、disabled
+`0.000331384`，三 CFG 分支一致，disabled 更接近 CPU。oracle JSON SHA256 为
+`111181f2e139e88b59997e0d0108cf0634c7f78bdb1dcfec9b40353330584fe2`。
+
+证据支持首步差异来自 Winograd 相关 conv1 数值路径，但仍未证明具体 Metal
+kernel 源码错误或最终像素的直接因果；`43/255` 探索性门槛仍失败，默认路径不切换。
+新增诊断参数 `--full-down0` 必须与 `--detailed-down0` 同用，旧默认行为保持。
+宿主 Metal 全量 unittest fresh 为 `88/88 OK`；受保护 dirty 文件保持不变。

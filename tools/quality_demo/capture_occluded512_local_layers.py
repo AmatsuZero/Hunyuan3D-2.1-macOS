@@ -23,6 +23,7 @@ DETAILED_DOWN0 = (
     "down_0_resnet_0.norm1", "down_0_resnet_0.conv1",
     "down_0_resnet_0.norm2", "down_0_resnet_0.conv2",
 )
+FULL_DOWN0 = DETAILED_DOWN0[:2]
 REGIONS = {5: (38, 42, 25, 27), 11: (41, 43, 28, 30),
            10: (42, 45, 34, 37)}
 EVIDENCE = Path("/Users/daubert/Github/hy3d-upgrade-evidence")
@@ -91,6 +92,9 @@ def capture(args):
                 return
             if value.ndim != 4 or value.shape[0] != 36:
                 raise ValueError(f"unexpected {name} shape {value.shape}")
+            if args.full_down0 and name in FULL_DOWN0:
+                np.save(local / f"step{actual_step}_{name}_full.npy",
+                        np.asarray(value), allow_pickle=False)
             for image in REGIONS:
                 selected = patch(value, image, value.shape[1], value.shape[2])
                 path = local / f"step{actual_step}_{name}_image{image}.npy"
@@ -158,17 +162,22 @@ def finalize(args):
     local = args.output_dir / "local-layers"
     selected_steps = tuple(args.capture_steps)
     selected_points = POINTS + DETAILED_DOWN0 if args.detailed_down0 else POINTS
+    full_names = {f"step{step}_{name}_full.npy"
+                  for step in selected_steps for name in FULL_DOWN0}
     expected_files = {
         f"step{step}_{name}_image{image}.npy"
         for step in selected_steps for name in selected_points for image in REGIONS
-    }
+    } | (full_names if args.full_down0 else set())
     actual_files = {path.name for path in local.glob("*.npy")}
     if actual_files != expected_files:
         raise RuntimeError(f"local trace missing={expected_files - actual_files}, "
                            f"unexpected={actual_files - expected_files}")
     for path in local.glob("*.npy"):
         value = np.load(path, allow_pickle=False)
-        if value.shape[0] != 3 or not np.isfinite(value).all():
+        if args.full_down0 and path.name.endswith("_full.npy"):
+            if value.shape != (36, 64, 64, 320) or not np.isfinite(value).all():
+                raise ValueError(f"invalid full down0 trace: {path}")
+        elif value.shape[0] != 3 or not np.isfinite(value).all():
             raise ValueError(f"invalid local patch: {path}")
     if json.loads((args.output_dir / "capture.json").read_text())["generated_images"] != 12:
         raise ValueError("incomplete image capture")
@@ -256,16 +265,20 @@ def main():
     capture_parser.add_argument("--winograd-disabled", action="store_true")
     capture_parser.add_argument("--capture-steps", type=int, nargs="+", default=STEPS)
     capture_parser.add_argument("--detailed-down0", action="store_true")
+    capture_parser.add_argument("--full-down0", action="store_true")
     finalize_parser = sub.add_parser("finalize")
     finalize_parser.add_argument("--backend", choices=("torch", "mlx"), required=True)
     finalize_parser.add_argument("--output-dir", type=Path, required=True)
     finalize_parser.add_argument("--capture-steps", type=int, nargs="+", default=STEPS)
     finalize_parser.add_argument("--detailed-down0", action="store_true")
+    finalize_parser.add_argument("--full-down0", action="store_true")
     compare_parser = sub.add_parser("compare")
     compare_parser.add_argument("--reference", type=Path, required=True)
     compare_parser.add_argument("--candidate", type=Path, required=True)
     compare_parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if getattr(args, "full_down0", False) and not args.detailed_down0:
+        parser.error("--full-down0 requires --detailed-down0")
     if args.command == "capture":
         capture(args)
     elif args.command == "finalize":
