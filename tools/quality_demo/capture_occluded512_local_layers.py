@@ -59,7 +59,9 @@ def capture(args):
     }
     expected["HUNYUAN_MLX_REFERENCE_FORWARD"] = "1" if args.backend == "mlx" else "0"
     expected["HUNYUAN_MLX_REFERENCE_FP32"] = "1" if args.backend == "mlx" else "0"
-    expected["HUNYUAN_MLX_DISABLE_WINOGRAD"] = "1" if args.backend == "mlx" else "0"
+    expected["HUNYUAN_MLX_DISABLE_WINOGRAD"] = (
+        "1" if args.backend == "mlx" or args.winograd_disabled else "0"
+    )
     for key, value in expected.items():
         if os.environ.get(key) != value:
             raise ValueError(f"{key} must be {value}")
@@ -72,13 +74,16 @@ def capture(args):
     if not args.output_dir.parent.is_dir():
         raise FileNotFoundError(args.output_dir.parent)
 
+    selected_steps = tuple(args.capture_steps)
+    if not selected_steps or any(step < 1 or step > 15 for step in selected_steps):
+        raise ValueError("capture steps must be between 1 and 15")
     original = MLXDispatchUNet.forward_mlx
     counter = {}
 
     def forward_mlx(self, sample, timestep, debug_trace=None):
         index = counter.get(id(self), 0) + 1
         counter[id(self)] = index
-        if index not in STEPS:
+        if index not in selected_steps:
             return original(self, sample, timestep, debug_trace=debug_trace)
         model = self._mlx_model
         local = args.output_dir / "local-layers"
@@ -126,9 +131,10 @@ def finalize(args):
     if (args.output_dir / "local-layers.json").exists():
         raise FileExistsError(args.output_dir / "local-layers.json")
     local = args.output_dir / "local-layers"
+    selected_steps = tuple(args.capture_steps)
     expected_files = {
         f"step{step}_{name}_image{image}.npy"
-        for step in STEPS for name in POINTS for image in REGIONS
+        for step in selected_steps for name in POINTS for image in REGIONS
     }
     actual_files = {path.name for path in local.glob("*.npy")}
     if actual_files != expected_files:
@@ -140,7 +146,7 @@ def finalize(args):
             raise ValueError(f"invalid local patch: {path}")
     if json.loads((args.output_dir / "capture.json").read_text())["generated_images"] != 12:
         raise ValueError("incomplete image capture")
-    report = {"backend": args.backend, "steps": STEPS, "points": POINTS,
+    report = {"backend": args.backend, "steps": selected_steps, "points": POINTS,
               "regions": REGIONS, "capture_sha256": digest(args.output_dir / "capture.json"),
               "records": {path.name: digest(path) for path in sorted(
                   (args.output_dir / "local-layers").glob("*.npy"))}}
@@ -221,9 +227,12 @@ def main():
     capture_parser = sub.add_parser("capture")
     capture_parser.add_argument("--backend", choices=("torch", "mlx"), required=True)
     capture_parser.add_argument("--output-dir", type=Path, required=True)
+    capture_parser.add_argument("--winograd-disabled", action="store_true")
+    capture_parser.add_argument("--capture-steps", type=int, nargs="+", default=STEPS)
     finalize_parser = sub.add_parser("finalize")
     finalize_parser.add_argument("--backend", choices=("torch", "mlx"), required=True)
     finalize_parser.add_argument("--output-dir", type=Path, required=True)
+    finalize_parser.add_argument("--capture-steps", type=int, nargs="+", default=STEPS)
     compare_parser = sub.add_parser("compare")
     compare_parser.add_argument("--reference", type=Path, required=True)
     compare_parser.add_argument("--candidate", type=Path, required=True)

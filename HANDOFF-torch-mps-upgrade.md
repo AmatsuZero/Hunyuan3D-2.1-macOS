@@ -550,3 +550,19 @@ reference_write NRMSE `0.013201`，说明 reference forward 也改变轨迹。
 交互组合在 reference_write NRMSE `0.021470`、step 14 latent NRMSE `0.012600`，
 表明两条路径非线性耦合。Winograd 环境变量作用于整个 MLX 进程，B/C 不是
 单独 generation-only 实验；默认路径继续保持不变。拆分 JSON SHA256 见阶段交接。
+
+## 21. R3 generation Winograd 首步 `conv_in` 边界（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-generation-winograd-conv-in-20261029.md`](HANDOFF-r3-occluded512-generation-winograd-conv-in-20261029.md)。
+本阶段在空 ComfyUI queue 下串行完成 Torch reference / 默认 Winograd 与
+Torch reference / Winograd-disabled 两次 fresh local-layer capture，12 张图
+分别与既有 A/D 归档逐文件 exact。两侧 initial/inner/reference 输入及
+`reference_write` 全部 exact；首步 `noise_pred_0` NRMSE `0.0008369135`，
+与既有 resident A/D 对照一致。
+
+新增 `--capture-steps` 与 `--winograd-disabled` 诊断参数后，step 1 的三个
+局部窗口最早观察到的非零层都是 `conv_in`（image 5/11/10 NRMSE
+`0.00068849/0.000454/0.000356`），step 3 image 5 的下游
+`up_3.2.attn` 达到 `0.011894`。这把 generation policy 的首个观察差异缩小到
+`conv_in`，但仍未证明具体 Metal kernel 或权重布局；默认路径继续不切换。
+CPU 合并报告 SHA256 为 `7888b2b3f726ef1745433872d171f1d1322166c0141deb9ab29b038a6c3ddbd9`。
