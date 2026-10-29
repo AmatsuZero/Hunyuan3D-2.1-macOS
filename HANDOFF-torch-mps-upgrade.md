@@ -579,3 +579,13 @@ policy 输出 exact。该证据把首步差异缩到 Winograd 相关的首个 32
 卷积，但尚未证明具体 Metal kernel 源码错误或最终像素因果。
 CPU 合并报告 SHA256 `de883e3ebb78a476a912ca372feac1e6daa5d53b4627fd1a75335a6f5f1e746d`；
 完整归档状态见阶段交接。默认路径和 `43/255` 探索性失败门槛不变。
+
+## 23. R3 conv1 policy/source 核查（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-conv1-policy-source-20261029.md`](HANDOFF-r3-occluded512-conv1-policy-source-20261029.md)。
+本阶段无 GPU；MLX dispatch 源码显示符合条件的 3×3、stride 1、32 倍数通道
+卷积会尝试 Winograd，`MLX_CONV_WINOGRAD_WORKING_SET=1` 使
+`winograd_batch_step()` 返回 0 并落到 implicit GEMM。`conv_in` 与首个
+`down_0_resnet_0.conv1` 都调用统一 `mx.conv2d`，权重布局转换相同。
+可读 checkout 是 MLX 0.32.3 dirty，而运行 wheel 是 0.32.4；因此这是机制
+证据，不是当前 binary 的逐字节 source proof。默认路径继续不切换。
