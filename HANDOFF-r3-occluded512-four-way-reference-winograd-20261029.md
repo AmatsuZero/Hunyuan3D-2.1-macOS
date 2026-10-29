@@ -61,3 +61,11 @@ reference write/cache 差异和 generation convolution policy 都能改变 resid
 
 本阶段不改默认 Torch reference、默认 Winograd 或默认 MLX dispatch；保护根目录
 dirty `torchvision_fix.py`、原始 checkout、旧 venv 和已交付 GLB。
+
+## 验证
+
+- D capture exit 0，归档 92/92 文件 SHA256 与临时输出相同。
+- 四路 15 类输入 exact；四路摘要和输入合同 JSON 已逐字节核对归档。
+- 宿主 Metal 环境全量 unittest `88/88 OK`；`git diff --check` 通过。
+- `torchvision_fix.py` SHA256 仍为
+  `d6139690b099ca3ecef80ddf3f1a25edfdf57f027c79bf8655a8f8aac1c8b493`。
