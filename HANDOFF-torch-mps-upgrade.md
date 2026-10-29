@@ -533,6 +533,20 @@ Torch/MLX reference × 默认/disabled Winograd 四路矩阵。四路 15 类输�
 相对 Torch reference + 默认 Winograd：MLX reference/默认为 `79/255` 最大图像差，
 MLX reference/disabled 为 `43/255`，Torch reference/disabled 为 `66/255`。
 D 的 reference_write 与 Torch 默认 exact，但 generation 首步已出现差异；C/D
-在相同 disabled policy 下仍有 `42/255` 图像最大差。结论是 reference 和 Winograd
-都会影响轨迹且存在非加性交互，不能把 C 的较小差异单独归因于任一开关，默认路径
+在相同 disabled policy 下仍有 `42/255` 图像最大差。Winograd 环境变量作用于
+整个 MLX 进程，B/C 同时改变 MLX reference 与 generation 卷积策略；只有 A/D
+隔离了 generation 策略。结论是 reference 和 Winograd 都会影响轨迹且存在
+非加性交互，不能把 C 的较小差异单独归因于任一开关，默认路径
 继续不切换。四路摘要 JSON 的 SHA256 见阶段交接。
+
+## 20. R3 occluded512 四路边界与交互拆分（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-four-way-boundary-split-20261029.md`](HANDOFF-r3-occluded512-four-way-boundary-split-20261029.md)。
+本阶段只读取已归档四路 resident trace，CPU-only 对比首步、CFG、scheduler、
+latent 和图像；输入合同 15 类全部 exact。A/D（同 Torch reference）隔离出
+Winograd 策略单变量：reference_write exact，但首步 noise NRMSE `0.000837`，
+说明 generation policy 在首步就改变结果。C/D（同 disabled policy）仍有
+reference_write NRMSE `0.013201`，说明 reference forward 也改变轨迹。
+交互组合在 reference_write NRMSE `0.021470`、step 14 latent NRMSE `0.012600`，
+表明两条路径非线性耦合。Winograd 环境变量作用于整个 MLX 进程，B/C 不是
+单独 generation-only 实验；默认路径继续保持不变。拆分 JSON SHA256 见阶段交接。

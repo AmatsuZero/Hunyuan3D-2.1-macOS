@@ -8,7 +8,7 @@ generation**。四路实验均使用同一 frozen input、初始 diffusion noise
 
 ## 四路合同
 
-| label | reference forward | generation Winograd | 来源 |
+| label | reference forward | MLX 进程 Winograd policy | 来源 |
 | --- | --- | --- | --- |
 | A | Torch reference | 默认 | `20261028/r3-reference-fp32-resident-01/occluded512/torch-reference` |
 | B | MLX fp32 reference | 默认 | `20261028/r3-reference-fp32-resident-01/occluded512/mlx-fp32` |
@@ -42,6 +42,9 @@ D 的 reference_write 与 A exact，但仅关闭 Winograd 就产生新的 `noise
 差异和 `66/255` 图像最大差；因此 generation Winograd policy 确实影响结果。
 在相同 disabled policy 下比较 C/D，reference forward 改变使图像最大差为
 `42/255`；在相同 MLX reference 下比较 B/C，Winograd 改变也明显改变轨迹。
+这个环境变量作用于整个 MLX 进程，所以 B/C 同时改变 MLX reference 和
+generation 的卷积策略；B/C 不是单独的 generation 算子实验。A/D 则保持
+Torch reference exact，单独隔离了 MLX generation 的策略变化。
 四路的相互作用不是可线性相加：C 相对 A 的最大差为 `43/255`，D 相对 A
 反而为 `66/255`，不能把 C 的较小差值归因于某一个开关单独修复。
 
@@ -69,3 +72,14 @@ dirty `torchvision_fix.py`、原始 checkout、旧 venv 和已交付 GLB。
 - 宿主 Metal 环境全量 unittest `88/88 OK`；`git diff --check` 通过。
 - `torchvision_fix.py` SHA256 仍为
   `d6139690b099ca3ecef80ddf3f1a25edfdf57f027c79bf8655a8f8aac1c8b493`。
+
+## 后续 CPU-only 拆分
+
+四路首步/CFG/latent 的 CPU-only 边界报告见
+`occluded512-four-way-boundary-split.json`（SHA256
+`541b8436f1bc75a1512a543407a887e1ffff014a8086de56acddf9545808c2b1`），
+交互组合见 `occluded512-four-way-interaction.json`（SHA256
+`c5587f13f30379877e392549381cb6742b0496f3795129db51d988f35fbce44e`）。
+它们确认 A/D 的 generation-only 隔离和 C/D 的 reference 差异，并显示
+`C-B-D+A` 在 reference_write、首步 noise 和后段 latent 均非零；下一阶段
+应优先沿 A/D 的局部 inner UNet 继续缩小 generation policy 的影响范围。
