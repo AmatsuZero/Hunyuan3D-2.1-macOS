@@ -629,3 +629,21 @@ wheel metadata 没有 VCS commit，不能声称 dylib 逐字节源自该 tag。
 `689bf9cd9402abd4234f6ed62d364a45889cdafd3d5f5ad04e03dd7956d468e8`。
 默认路径不切换；下一阶段优先调查同 disabled policy 的 C/D reference 残余
 `42/255`，不能把 A/D 单卷积差直接当作最终像素的完整因果解释。
+
+## 26. R3 occluded512 C/D reference 残余 CPU-only 边界（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-cd-reference-boundary-20261029.md`](HANDOFF-r3-occluded512-cd-reference-boundary-20261029.md)。
+在相同 disabled policy 下，C/D 的初始/inner/DINO/text/reference 输入 exact；
+`reference_write` NRMSE `0.0132010`，16 个 condition cache 全部不同，最早
+归档点 `down_0_0_0` NRMSE `0.0009781`。首步未条件化 noise 分支 exact，另
+两条条件分支 NRMSE `0.00144444` / `0.000810331`；从下一步起未条件化
+分支也随 latent 差开始分叉。step 14 全量 noise/latent NRMSE
+`0.007048/0.004577`。
+
+最终 C/D 只有 image 11 有 4 个像素超过 `32/255`，最大 `42/255`；image 5/10
+最大仅 `25/6`。image 5 step 7 与 image 11 step 14 的局部 CFG 差基本由
+noise 分支线性解释，scheduler 不是新的首发边界。CPU 报告 SHA256
+`6bc9400adb2fd4a252a1210b918fbf28409ed2af71c4e31eddc235782ab75922`，
+局部报告 SHA256 `a2da3c50b72b3beb2b9bbe41607dab449c7026ce5ae75b2a8b1c0404f99cb067`。
+下一阶段需要窄范围 cache 交换/注入来证明具体 reference cache 与最终像素
+的因果关系；默认路径不切换。
