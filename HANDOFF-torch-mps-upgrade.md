@@ -715,3 +715,16 @@ manifest SHA256 `73df44eb33d711316b37604c594c89b9a89250311908c1af45935ce664dcb1c
 验证摘要 SHA256 `72902bd8ed1c9afc4da468b74555f96d5a44c88365ce00785477004def3a9444`。
 默认路径、Winograd policy 和已交付 GLB 均未改动。下一步转向 reference producer 的
 block 级最早分叉，或设停止判据的连续 block cache swap；仍保持单 GPU、fresh output。
+
+## 30. R3 reference producer 精度/后端差分（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-reference-producer-precision-20261029.md`](HANDOFF-r3-reference-producer-precision-20261029.md)。
+补齐当前 C=MLX fp32、D=Torch fp16 与 Torch fp32 控制三路 reference producer trace；
+三路输入和 checkpoint SHA256 相同，MLX 复跑显式 `MLX_CONV_WINOGRAD=0`，52 个
+探针与既有 MLX trace exact。Torch fp32 → MLX fp32 的 `conv_in` exact，
+`down_0_resnet_0.norm1` NRMSE `5.93e-8`、`conv1` `9.37e-7`，但
+`time_emb_proj` `6.34e-4`、`conv2` `5.23e-4`，`down_0_resnet_1` `2.09e-3`；
+仅提升 Torch 精度或仅归因 Winograd 都不足以解释全部 C/D 差异。证据归档
+manifest SHA256 为 `d8d7d053f366ba87a06fbe6f7df2316861746b8ef4c4f13e231761bd34fdf552`。
+下一步捕获时间嵌入和 `time_emb_proj` 输入/输出，并用 CPU fp32 oracle 定位线性层
+布局/激活/后端边界；默认路径继续不切换。
