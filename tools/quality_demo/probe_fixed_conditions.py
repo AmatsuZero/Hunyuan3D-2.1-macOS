@@ -168,6 +168,42 @@ def load_npy(directory, name):
     return np.load(path, allow_pickle=False)
 
 
+def _load_reference_cache(directory):
+    """Load one complete diagnostic reference cache from ``condition_embed_*.npy``.
+
+    The cache is intentionally kept as NumPy arrays here.  The capture stage
+    converts it to MLX arrays only after the dispatch wrapper is installed, so
+    this helper remains CPU-only and is safe to validate in unit tests.
+    """
+    directory = Path(directory)
+    prefix = "condition_embed_"
+    paths = sorted(directory.glob(prefix + "*.npy"))
+    if len(paths) != 16:
+        raise ValueError(
+            f"reference cache directory must contain exactly 16 layers, got {len(paths)}"
+        )
+    cache = {}
+    for path in paths:
+        name = path.stem[len(prefix):]
+        if not name:
+            raise ValueError(f"reference cache layer name is empty: {path.name}")
+        value = np.load(path, allow_pickle=False)
+        if value.ndim != 3:
+            raise ValueError(
+                f"reference cache layer {name!r} must be rank-3, got shape {value.shape}"
+            )
+        if not np.issubdtype(value.dtype, np.floating):
+            raise ValueError(
+                f"reference cache layer {name!r} must be floating point, got {value.dtype}"
+            )
+        if not np.isfinite(value).all():
+            raise ValueError(f"reference cache layer {name!r} contains non-finite values")
+        cache[name] = value
+    if len(cache) != 16:
+        raise ValueError("reference cache layer names must be unique")
+    return cache
+
+
 def seed_everything(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -450,6 +486,8 @@ def stage_capture(args):
     pipe = pipe.to(device)
     torch.mps.synchronize()
     report["torch_load_to_mps_s"] = time.perf_counter() - load_started
+    injected_reference_cache = None
+    loaded_reference_cache = None
     if args.mlx:
         import mlx.core as mx
         from mlx_utils import setup_mlx_dispatch
@@ -466,6 +504,13 @@ def stage_capture(args):
         report["mlx_dispatch_load_s"] = time.perf_counter() - dispatch_started
         if mlx_dispatch is None:
             raise RuntimeError("requested MLX dispatch but setup_mlx_dispatch returned None")
+        if args.inject_cache:
+            loaded_reference_cache = _load_reference_cache(args.inject_cache)
+            injected_reference_cache = {
+                name: mx.array(value).astype(mlx_dispatch._mlx_dtype)
+                for name, value in loaded_reference_cache.items()
+            }
+            mx.eval(list(injected_reference_cache.values()))
         original_reset = mlx_dispatch.reset
 
         def reset_recorded():
@@ -497,6 +542,23 @@ def stage_capture(args):
             "reference_unet": type(pipe.unet.unet_dual).__module__ + "." +
                               type(pipe.unet.unet_dual).__name__,
         }
+        if injected_reference_cache is not None:
+            source_dir = Path(args.inject_cache)
+            report["injected_reference_cache"] = {
+                "directory": str(source_dir.resolve()),
+                "layers": sorted(injected_reference_cache),
+                "dtype": str(mlx_dispatch._mlx_dtype),
+                "source": "diagnostic-reference-write-override",
+                "source_capture_sha256": hashlib.sha256(
+                    (source_dir / "capture.json").read_bytes()
+                ).hexdigest(),
+                "layer_file_sha256": {
+                    name: hashlib.sha256(
+                        (source_dir / ("condition_embed_" + name + ".npy")).read_bytes()
+                    ).hexdigest()
+                    for name in sorted(injected_reference_cache)
+                },
+            }
         dino_projector = pipe.unet.image_proj_model_dino
         if hasattr(dino_projector, "bundle_path"):
             report["mlx_dispatch"].update({
@@ -573,6 +635,17 @@ def stage_capture(args):
             result = original_dual(*call_args, **call_kwargs)
             torch.mps.synchronize()
             report.setdefault("reference_forward_s", []).append(time.perf_counter() - reference_started)
+        if injected_reference_cache is not None:
+            cross = call_kwargs.get("cross_attention_kwargs") or {}
+            current = cross.get("condition_embed_dict")
+            if not isinstance(current, dict) or set(current) != set(loaded_reference_cache):
+                raise ValueError("reference cache injection layer names differ from live reference write")
+            for name, value in loaded_reference_cache.items():
+                if tuple(current[name].shape) != value.shape:
+                    raise ValueError(f"reference cache injection shape mismatch: {name}")
+            current.update({name: torch.from_numpy(value) for name, value in loaded_reference_cache.items()})
+            mlx_dispatch._pending_reference_cache = injected_reference_cache
+            report["injected_reference_cache"]["applied"] = True
         captured["reference_write"] = result[0] if isinstance(result, tuple) else result
         if args.capture_cache:
             cross = call_kwargs.get("cross_attention_kwargs") or {}
@@ -621,6 +694,16 @@ def stage_capture(args):
                     )
         with trace_scope("first_step", args.trace_stage, report):
             result = original_inner(*call_args, **call_kwargs)
+        if injected_reference_cache is not None and capture_first_inner:
+            consumed = mlx_dispatch._cached_mlx["condition_embed_dict"]
+            report["injected_reference_cache"]["consumer_exact"] = bool(
+                set(consumed) == set(loaded_reference_cache) and all(
+                    np.array_equal(np.array(consumed[name]), loaded_reference_cache[name])
+                    for name in loaded_reference_cache
+                )
+            )
+            if not report["injected_reference_cache"]["consumer_exact"]:
+                raise RuntimeError("injected reference cache was not consumed exactly")
         if capture_first_inner:
             captured["inner_output"] = result[0] if isinstance(result, tuple) else result
         return result
@@ -803,6 +886,8 @@ def main():
     parser.add_argument("--fixtures", type=Path)
     parser.add_argument("--initial-noise", type=Path)
     parser.add_argument("--inject", type=Path)
+    parser.add_argument("--inject-cache", type=Path,
+                        help="inject a complete 16-layer condition_embed cache (diagnostic only)")
     parser.add_argument("--steps", type=int, default=15)
     parser.add_argument("--stop-after", type=int, default=1)
     parser.add_argument("--guidance-scale", type=float, default=3.0)
@@ -829,9 +914,16 @@ def main():
     args = parser.parse_args()
     if args.capture_cache and args.stage != "capture":
         parser.error("--capture-cache requires --stage capture")
+    if args.inject_cache and (args.stage != "capture" or not args.mlx):
+        parser.error("--inject-cache requires --stage capture --mlx")
+    if args.inject_cache and (not args.capture_cache or not args.initial_noise or
+                              os.environ.get("HUNYUAN_MLX_FIRST_STEP") != "1" or
+                              os.environ.get("HUNYUAN_MLX_RESIDENT_LOOP") != "1"):
+        parser.error("--inject-cache requires --capture-cache, --initial-noise, "
+                     "HUNYUAN_MLX_FIRST_STEP=1 and HUNYUAN_MLX_RESIDENT_LOOP=1")
     if args.repeat_request and (args.stage != "capture" or args.stop_after != 0 or
                                 not args.initial_noise or not args.capture_cache or
-                                args.ambient_posterior or args.inject or
+                                args.ambient_posterior or args.inject or args.inject_cache or
                                 os.environ.get("HUNYUAN_MLX_RESIDENT_TRACE_DIR")):
         parser.error("--repeat-request requires full fixed capture, initial noise, cache capture, and no trace")
     if args.wait_for_file and args.trace_stage != "first_step":

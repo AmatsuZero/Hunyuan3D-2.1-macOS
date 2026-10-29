@@ -4,7 +4,7 @@
 
 ## 1. 接手结论
 
-- 当前阶段在隔离验证 Torch 2.5.1 → 2.14.1 的基础上逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；P3 真实 bake CPU 例外已完成数值对照并移除旧 workaround（见 §12）；P5 已完成三轮串行旧/新版 benchmark 样本（见 §13）。R3 的 DINO projector、position indices、reference cache/forward、first-step 和 resident loop 已有 opt-in 实现与对照（见 §14–15），但默认 Torch reference、默认 Winograd、默认 MLX dispatch 和默认环境未切换；occluded512 图像最大差仍超探索性门槛。
+- 当前阶段在隔离验证 Torch 2.5.1 → 2.14.1 的基础上逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；P3 真实 bake CPU 例外已完成数值对照并移除旧 workaround（见 §12）；P5 已完成三轮串行旧/新版 benchmark 样本（见 §13）。R3 的 DINO projector、position indices、reference cache/forward、first-step 和 resident loop 已有 opt-in 实现与对照（见 §14–15）。§27 已证明 16 层 reference cache 交换足以逐元素复现 C/D 的首步 noise 和 12 张最终图；默认 Torch reference、默认 Winograd、默认 MLX dispatch 和默认环境仍未切换，occluded512 C 相对 A 的最大图像差仍超探索性门槛。
 - 新版已完成关闭自动 fallback 的完整上色；所审计神经网络的参数、计算输入/输出均在 MPS，MLX 部分在 Metal。P2 命名 Torch-only 窗口已有目标 PID 的 Metal trace；不能据此宣称全流水线都在 GPU：显式 CPU 路径仍存在，完整 pipeline 的 trace 验收仍未完成。
 - 颜色诊断已闭环到固定条件及本地完整 GLB 复验：旧版（Torch 2.5.1）全黑 HY3D 来自 MPS bicubic/DINO 错误；候选版早期 hybrid 的 H/Y/D 染红来自 MLX reference attention 材质 V head layout；后续重复漂移来自 MLX loader 漏载 `up_block_0` upsampler 权重。根因均已修复，修复后固定条件 15 步 hybrid 及完整 GLB 的 Blender 四视图恢复黑 H/Y/D、红 3。用户设备/独立 3D 查看仍未验收。
 - 相同 seed 在两个 Torch 版本下产生不同实际噪声，旧的同 seed 对比不充分。把旧版实际初始噪声注入修复前候选 hybrid 后 H/Y/D 仍红——**初始噪声不是染红根因（负结果保留）**；后续纯 Torch/hybrid 固定条件对照才把分叉定位到 MLX reference attention。
@@ -647,3 +647,39 @@ noise 分支线性解释，scheduler 不是新的首发边界。CPU 报告 SHA25
 局部报告 SHA256 `a2da3c50b72b3beb2b9bbe41607dab449c7026ce5ae75b2a8b1c0404f99cb067`。
 下一阶段需要窄范围 cache 交换/注入来证明具体 reference cache 与最终像素
 的因果关系；默认路径不切换。
+
+## 27. R3 occluded512 完整 reference cache swap 因果闭环（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-cache-swap-causal-20261029.md`](HANDOFF-r3-occluded512-cache-swap-causal-20261029.md)。
+本阶段给固定条件诊断工具加入了 opt-in `--inject-cache`：仅允许 MLX
+`capture`，读取恰好 16 个 `condition_embed_*.npy`，在真实 reference write
+后替换 live cache，并在首个 MLX generation step 校验 consumer exact。默认
+路径、Torch reference、Winograd 与已交付 GLB 均未改动。
+
+在相同 disabled-Winograd、frozen input、初始 noise、guidance/reference/MVA
+权重下：
+
+- Torch reference + C cache 的三条首步 inner/noise 分支与 C 逐元素 exact；
+- MLX fp32 reference + D cache 的三条首步 inner/noise 分支与 D 逐元素 exact；
+- 完整 15 步 MLX fp32 reference + D cache 的 `noise_pred_0` 和 12 张图与 D
+  逐元素 exact；相对 C 的 image 11 最大差仍为 `42/255`；
+- 注入 D 时 `reference_write` 仍与 D 不同（NRMSE `0.013204804`），表明
+  cache 交换是 generation consumer 的独立诊断边界，而不是覆盖 reference
+  输出的伪造。
+
+机器可读摘要已归档于
+`/Users/daubert/Github/hy3d-upgrade-evidence/20261029/r3-cache-swap-causal-20261029/`，
+`hy3d-cache-swap-summary-20261029.json` SHA256
+`7406ee9b89a4b05f16128317e686ecfdf5c34a5b27287a9abb7f4559ddcca822`；完整
+capture SHA256 `b322e2a81797e3f16480040ae5f85bfeb77cc3f5bd7fc836b5eb6194fad1e251`。
+120 项证据逐文件 manifest SHA256
+`0d277f6dc1fa3ec40878a7b8ac5fba8437bf23e30e2a1c9240c0c5d684d12237`，与
+`/private/tmp` 原始 capture 逐文件 exact。
+候选环境 cache 单元测试 `2/2 OK`、宿主 Metal 全量 unittest `90/90 OK`，脚本 py_compile 和 `git diff --check`
+通过。普通沙箱曾误报 MPS 不可用，宿主权限下 macOS 27.2 / Torch 2.14.1
+重跑成功；ComfyUI 每次检查均为 running/pending 空。
+
+结论：完整 16 层 reference cache 是这组 C/D `42/255` 图像差的充分传递
+边界；尚不能把单层 cache 或 reference write 中某个算子认定为更早根因。下一
+步若继续，应做单层 cache 差分或 producer 层级定位，仍保持一次一个 GPU、fresh
+output、默认路径不切换。
