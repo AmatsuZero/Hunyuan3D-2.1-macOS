@@ -18,6 +18,9 @@ PAINT = PROJECT / "hy3dpaint"
 sys.path.insert(0, str(PAINT))
 
 POINTS = (
+    "time_embedding.linear_1.input", "time_embedding.linear_1",
+    "time_embedding.linear_2.input", "time_embedding.linear_2",
+    "down_0_resnet_0.temb", "down_0_resnet_0.time_emb_proj.input",
     "conv_in", "down_0", "down_1", "down_2", "down_3", "mid",
     "down_0_resnet_0", "down_0_attn_0", "down_0_resnet_1", "down_0_attn_1",
     "down_0_resnet_0.norm1", "down_0_resnet_0.conv1",
@@ -100,6 +103,17 @@ def run_torch(args, inputs):
             output_hook(f"down_0_attn_{index}")
         ))
     first_resnet = dual.down_blocks[0].resnets[0]
+    for name in ("linear_1", "linear_2"):
+        module = getattr(dual.time_embedding, name)
+        hooks.append(module.register_forward_pre_hook(input_hook(f"time_embedding.{name}.input")))
+        hooks.append(module.register_forward_hook(output_hook(f"time_embedding.{name}")))
+    def temb_hook(_module, values, kwargs):
+        temb = values[1] if len(values) > 1 else kwargs["temb"]
+        save(args.output, "down_0_resnet_0.temb", temb)
+    hooks.append(first_resnet.register_forward_pre_hook(temb_hook, with_kwargs=True))
+    hooks.append(first_resnet.time_emb_proj.register_forward_pre_hook(
+        input_hook("down_0_resnet_0.time_emb_proj.input")
+    ))
     for name in ("norm1", "conv1", "time_emb_proj", "norm2", "conv2"):
         hooks.append(getattr(first_resnet, name).register_forward_hook(
             output_hook(f"down_0_resnet_0.{name}")
@@ -202,6 +216,7 @@ def run_mlx(args, inputs):
         save(args.output, name, value, nhwc=True)
 
     model._reference_debug_trace = trace
+    model.time_embedding._reference_debug_trace = trace
     model.down_block_0.resnets[0]._reference_debug_trace = trace
     model.up_block_0._reference_debug_trace = trace
     for index in (1, 2):

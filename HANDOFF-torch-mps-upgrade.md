@@ -728,3 +728,15 @@ block 级最早分叉，或设停止判据的连续 block cache swap；仍保持
 manifest SHA256 为 `d8d7d053f366ba87a06fbe6f7df2316861746b8ef4c4f13e231761bd34fdf552`。
 下一步捕获时间嵌入和 `time_emb_proj` 输入/输出，并用 CPU fp32 oracle 定位线性层
 布局/激活/后端边界；默认路径继续不切换。
+
+## 31. R3 reference 时间嵌入局部边界（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-reference-time-embedding-20261029.md`](HANDOFF-r3-reference-time-embedding-20261029.md)。
+新增六个 opt-in 时间嵌入探针和 CPU fp32 oracle。时间编码输入 exact，第一层 Linear
+与 SiLU 在两端只差约 `1e-8`；`linear_2` 对自身冻结输入的 CPU oracle，Torch
+NRMSE `2.95e-7`、MLX `2.730e-4`；首个 `time_emb_proj` 分别为 `5.89e-7`、
+`3.745e-4`。最早明显局部边界缩到 MLX `time_embedding.linear_2`，但尚未证明具体
+kernel 或最终图像因果。既有探针输出每侧 52/52 exact，全量测试 91/91 OK。
+131 项证据 manifest SHA256：`873d1cfbf5616f427016a470e6639441b612888281a5369a03f2de5831ce17d0`。
+下一步冻结输入/权重做两个 Linear 的直接调用及 CPU 对照，核对参数后再调查执行路径；
+默认路径和交付 GLB 保持不变。

@@ -92,7 +92,19 @@ class TimestepEmbedding(nn.Module):
         self.linear_2 = nn.Linear(out_ch, out_ch)
 
     def __call__(self, x):
-        return self.linear_2(nn.silu(self.linear_1(x)))
+        debug_trace = getattr(self, "_reference_debug_trace", None)
+        if debug_trace is not None:
+            debug_trace("time_embedding.linear_1.input", x)
+        x = self.linear_1(x)
+        if debug_trace is not None:
+            debug_trace("time_embedding.linear_1", x)
+        x = nn.silu(x)
+        if debug_trace is not None:
+            debug_trace("time_embedding.linear_2.input", x)
+        x = self.linear_2(x)
+        if debug_trace is not None:
+            debug_trace("time_embedding.linear_2", x)
+        return x
 
 
 class ResnetBlock2D(nn.Module):
@@ -117,7 +129,11 @@ class ResnetBlock2D(nn.Module):
         h = self.conv1(h)
         if debug_trace is not None:
             debug_trace("down_0_resnet_0.conv1", h)
-        time_emb = self.time_emb_proj(nn.silu(temb))
+        time_input = nn.silu(temb)
+        if debug_trace is not None:
+            debug_trace("down_0_resnet_0.temb", temb)
+            debug_trace("down_0_resnet_0.time_emb_proj.input", time_input)
+        time_emb = self.time_emb_proj(time_input)
         if debug_trace is not None:
             debug_trace("down_0_resnet_0.time_emb_proj", time_emb)
         h = h + time_emb[:, None, None, :]
