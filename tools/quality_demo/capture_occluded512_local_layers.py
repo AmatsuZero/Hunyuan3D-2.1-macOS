@@ -19,6 +19,10 @@ POINTS = (
     "conv_in", "down_0", "down_1", "down_2", "down_3", "mid",
     "up_1.2.attn", "up_2.2.attn", "up_3.2.attn",
 )
+DETAILED_DOWN0 = (
+    "down_0_resnet_0.norm1", "down_0_resnet_0.conv1",
+    "down_0_resnet_0.norm2", "down_0_resnet_0.conv2",
+)
 REGIONS = {5: (38, 42, 25, 27), 11: (41, 43, 28, 30),
            10: (42, 45, 34, 37)}
 EVIDENCE = Path("/Users/daubert/Github/hy3d-upgrade-evidence")
@@ -75,28 +79,21 @@ def capture(args):
         raise FileNotFoundError(args.output_dir.parent)
 
     selected_steps = tuple(args.capture_steps)
+    selected_points = POINTS + DETAILED_DOWN0 if args.detailed_down0 else POINTS
     if not selected_steps or any(step < 1 or step > 15 for step in selected_steps):
         raise ValueError("capture steps must be between 1 and 15")
-    original = MLXDispatchUNet.forward_mlx
-    counter = {}
-
-    def forward_mlx(self, sample, timestep, debug_trace=None):
-        index = counter.get(id(self), 0) + 1
-        counter[id(self)] = index
-        if index not in selected_steps:
-            return original(self, sample, timestep, debug_trace=debug_trace)
-        model = self._mlx_model
+    def install_trace(model, actual_step):
         local = args.output_dir / "local-layers"
         local.mkdir(parents=True, exist_ok=True)
 
         def trace(name, value):
-            if name not in POINTS:
+            if name not in selected_points:
                 return
             if value.ndim != 4 or value.shape[0] != 36:
                 raise ValueError(f"unexpected {name} shape {value.shape}")
             for image in REGIONS:
                 selected = patch(value, image, value.shape[1], value.shape[2])
-                path = local / f"step{index}_{name}_image{image}.npy"
+                path = local / f"step{actual_step}_{name}_image{image}.npy"
                 np.save(path, selected, allow_pickle=False)
 
         for block_index in range(4):
@@ -104,13 +101,40 @@ def capture(args):
             block._reference_debug_trace = trace
             if block_index:
                 block._reference_trace_index = block_index
+        model.down_block_0.resnets[0]._reference_debug_trace = trace
+        return trace
 
+    original_raw = MLXDispatchUNet._mlx_forward_raw
+    original_forward = MLXDispatchUNet.forward_mlx
+    counter = {}
+
+    def raw_forward(self, sample, timestep, debug_trace=None):
+        if 1 not in selected_steps:
+            return original_raw(self, sample, timestep, debug_trace=debug_trace)
+        trace = install_trace(self._mlx_model, 1)
         try:
-            return original(self, sample, timestep, debug_trace=trace)
+            return original_raw(self, sample, timestep, debug_trace=trace)
         finally:
             for block_index in range(4):
-                getattr(model, f"up_block_{block_index}")._reference_debug_trace = None
+                getattr(self._mlx_model, f"up_block_{block_index}")._reference_debug_trace = None
+            self._mlx_model.down_block_0.resnets[0]._reference_debug_trace = None
 
+    def forward_mlx(self, sample, timestep, debug_trace=None):
+        index = counter.get(id(self), 0) + 1
+        counter[id(self)] = index
+        actual_step = index + 1
+        if actual_step not in selected_steps:
+            return original_forward(self, sample, timestep, debug_trace=debug_trace)
+        trace = install_trace(self._mlx_model, actual_step)
+
+        try:
+            return original_forward(self, sample, timestep, debug_trace=trace)
+        finally:
+            for block_index in range(4):
+                getattr(self._mlx_model, f"up_block_{block_index}")._reference_debug_trace = None
+            self._mlx_model.down_block_0.resnets[0]._reference_debug_trace = None
+
+    MLXDispatchUNet._mlx_forward_raw = raw_forward
     MLXDispatchUNet.forward_mlx = forward_mlx
     prior_argv = sys.argv
     sys.argv = [str(root / "tools/quality_demo/probe_fixed_conditions.py"),
@@ -123,7 +147,8 @@ def capture(args):
         run_fixed()
     finally:
         sys.argv = prior_argv
-        MLXDispatchUNet.forward_mlx = original
+        MLXDispatchUNet._mlx_forward_raw = original_raw
+        MLXDispatchUNet.forward_mlx = original_forward
     finalize(args)
 
 
@@ -132,9 +157,10 @@ def finalize(args):
         raise FileExistsError(args.output_dir / "local-layers.json")
     local = args.output_dir / "local-layers"
     selected_steps = tuple(args.capture_steps)
+    selected_points = POINTS + DETAILED_DOWN0 if args.detailed_down0 else POINTS
     expected_files = {
         f"step{step}_{name}_image{image}.npy"
-        for step in selected_steps for name in POINTS for image in REGIONS
+        for step in selected_steps for name in selected_points for image in REGIONS
     }
     actual_files = {path.name for path in local.glob("*.npy")}
     if actual_files != expected_files:
@@ -146,7 +172,7 @@ def finalize(args):
             raise ValueError(f"invalid local patch: {path}")
     if json.loads((args.output_dir / "capture.json").read_text())["generated_images"] != 12:
         raise ValueError("incomplete image capture")
-    report = {"backend": args.backend, "steps": selected_steps, "points": POINTS,
+    report = {"backend": args.backend, "steps": selected_steps, "points": selected_points,
               "regions": REGIONS, "capture_sha256": digest(args.output_dir / "capture.json"),
               "records": {path.name: digest(path) for path in sorted(
                   (args.output_dir / "local-layers").glob("*.npy"))}}
@@ -201,7 +227,7 @@ def compare(args):
                            **metrics(right.astype(np.float32), left.astype(np.float32))})
     rows = []
     for step in STEPS:
-        for point in POINTS:
+        for point in meta[0]["points"]:
             for image in REGIONS:
                 name = f"step{step}_{point}_image{image}.npy"
                 left, right = (np.load(root / "local-layers" / name, allow_pickle=False)
@@ -229,10 +255,12 @@ def main():
     capture_parser.add_argument("--output-dir", type=Path, required=True)
     capture_parser.add_argument("--winograd-disabled", action="store_true")
     capture_parser.add_argument("--capture-steps", type=int, nargs="+", default=STEPS)
+    capture_parser.add_argument("--detailed-down0", action="store_true")
     finalize_parser = sub.add_parser("finalize")
     finalize_parser.add_argument("--backend", choices=("torch", "mlx"), required=True)
     finalize_parser.add_argument("--output-dir", type=Path, required=True)
     finalize_parser.add_argument("--capture-steps", type=int, nargs="+", default=STEPS)
+    finalize_parser.add_argument("--detailed-down0", action="store_true")
     compare_parser = sub.add_parser("compare")
     compare_parser.add_argument("--reference", type=Path, required=True)
     compare_parser.add_argument("--candidate", type=Path, required=True)

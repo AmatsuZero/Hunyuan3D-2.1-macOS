@@ -551,7 +551,7 @@ reference_write NRMSE `0.013201`，说明 reference forward 也改变轨迹。
 表明两条路径非线性耦合。Winograd 环境变量作用于整个 MLX 进程，B/C 不是
 单独 generation-only 实验；默认路径继续保持不变。拆分 JSON SHA256 见阶段交接。
 
-## 21. R3 generation Winograd 首步 `conv_in` 边界（2026-10-29）
+## 21. R3 generation Winograd 局部边界（2026-10-29，步骤编号已修正）
 
 阶段交接见 [`HANDOFF-r3-occluded512-generation-winograd-conv-in-20261029.md`](HANDOFF-r3-occluded512-generation-winograd-conv-in-20261029.md)。
 本阶段在空 ComfyUI queue 下串行完成 Torch reference / 默认 Winograd 与
@@ -560,9 +560,22 @@ Torch reference / Winograd-disabled 两次 fresh local-layer capture，12 张图
 `reference_write` 全部 exact；首步 `noise_pred_0` NRMSE `0.0008369135`，
 与既有 resident A/D 对照一致。
 
-新增 `--capture-steps` 与 `--winograd-disabled` 诊断参数后，step 1 的三个
-局部窗口最早观察到的非零层都是 `conv_in`（image 5/11/10 NRMSE
-`0.00068849/0.000454/0.000356`），step 3 image 5 的下游
-`up_3.2.attn` 达到 `0.011894`。这把 generation policy 的首个观察差异缩小到
-`conv_in`，但仍未证明具体 Metal kernel 或权重布局；默认路径继续不切换。
+初版 `capture_occluded512_local_layers.py` 把 `forward_mlx` 调用序号误标为
+扩散 step：旧 `step1/3` 局部文件实际属于扩散 step 2/4。因此旧局部
+`conv_in` NRMSE `0.00068849/0.000454/0.000356` 是后续步输入已分叉的
+观察，不能当作首步卷积差异。修正后的真正首步结果见 §22；默认路径不切换。
 CPU 合并报告 SHA256 为 `7888b2b3f726ef1745433872d171f1d1322166c0141deb9ab29b038a6c3ddbd9`。
+
+## 22. R3 真正首步 Winograd `down_0_resnet_0.conv1` 边界（2026-10-29）
+
+修正 probe 钩住 `_mlx_forward_raw` 后，A/D 两次 fresh capture 的 12 张图各自
+与原归档 exact；26 个边界数组与 4 个 inner scalar 全部 exact。真正扩散 step 1 的三个局部窗口
+`conv_in` 与首个 down ResNet `norm1` 均逐元素 exact；最早非零层是
+`down_0_resnet_0.conv1`，image 5/11/10 局部 NRMSE
+`0.003438/0.005074/0.004221`。同一 frozen norm1 输入和 checkpoint 的
+CPU float32 `conv1` oracle 显示 disabled 相对 CPU NRMSE `0.000327/0.000324/0.000330`，
+默认 Winograd 为 `0.002562/0.007253/0.004565`；同输入的 `conv_in` 两种
+policy 输出 exact。该证据把首步差异缩到 Winograd 相关的首个 320→320
+卷积，但尚未证明具体 Metal kernel 源码错误或最终像素因果。
+CPU 合并报告 SHA256 `de883e3ebb78a476a912ca372feac1e6daa5d53b4627fd1a75335a6f5f1e746d`；
+完整归档状态见阶段交接。默认路径和 `43/255` 探索性失败门槛不变。
