@@ -4,7 +4,7 @@
 
 ## 1. 接手结论
 
-- 当前阶段在隔离验证 Torch 2.5.1 → 2.14.1 的基础上逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；P3 真实 bake CPU 例外已完成数值对照并移除旧 workaround（见 §12）；P5 已完成三轮串行旧/新版 benchmark 样本（见 §13）。R3 的 DINO projector、position indices、reference cache/forward、first-step 和 resident loop 已有 opt-in 实现与对照（见 §14–15）。§27 已证明 16 层 reference cache 交换足以逐元素复现 C/D 的首步 noise 和 12 张最终图；默认 Torch reference、默认 Winograd、默认 MLX dispatch 和默认环境仍未切换，occluded512 C 相对 A 的最大图像差仍超探索性门槛。
+- 当前阶段在隔离验证 Torch 2.5.1 → 2.14.1 的基础上逐步迁移 MLX。P2 命名 Torch-only Metal trace 已完成（见 §11）；P3 真实 bake CPU 例外已完成数值对照并移除旧 workaround（见 §12）；P5 已完成三轮串行旧/新版 benchmark 样本（见 §13）。R3 的 DINO projector、position indices、reference cache/forward、first-step 和 resident loop 已有 opt-in 实现与对照（见 §14–15）。§27 已证明 16 层 reference cache 交换足以逐元素复现 C/D 的首步 noise 和 12 张最终图；§28 两个代表层的单层 swap 都只能产生部分图像差。默认 Torch reference、默认 Winograd、默认 MLX dispatch 和默认环境仍未切换，occluded512 C 相对 A 的最大图像差仍超探索性门槛。
 - 新版已完成关闭自动 fallback 的完整上色；所审计神经网络的参数、计算输入/输出均在 MPS，MLX 部分在 Metal。P2 命名 Torch-only 窗口已有目标 PID 的 Metal trace；不能据此宣称全流水线都在 GPU：显式 CPU 路径仍存在，完整 pipeline 的 trace 验收仍未完成。
 - 颜色诊断已闭环到固定条件及本地完整 GLB 复验：旧版（Torch 2.5.1）全黑 HY3D 来自 MPS bicubic/DINO 错误；候选版早期 hybrid 的 H/Y/D 染红来自 MLX reference attention 材质 V head layout；后续重复漂移来自 MLX loader 漏载 `up_block_0` upsampler 权重。根因均已修复，修复后固定条件 15 步 hybrid 及完整 GLB 的 Blender 四视图恢复黑 H/Y/D、红 3。用户设备/独立 3D 查看仍未验收。
 - 相同 seed 在两个 Torch 版本下产生不同实际噪声，旧的同 seed 对比不充分。把旧版实际初始噪声注入修复前候选 hybrid 后 H/Y/D 仍红——**初始噪声不是染红根因（负结果保留）**；后续纯 Torch/hybrid 固定条件对照才把分叉定位到 MLX reference attention。
@@ -683,3 +683,19 @@ capture SHA256 `b322e2a81797e3f16480040ae5f85bfeb77cc3f5bd7fc836b5eb6194fad1e251
 边界；尚不能把单层 cache 或 reference write 中某个算子认定为更早根因。下一
 步若继续，应做单层 cache 差分或 producer 层级定位，仍保持一次一个 GPU、fresh
 output、默认路径不切换。
+
+## 28. R3 occluded512 单层 reference cache swap（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-occluded512-cache-single-layer-20261029.md`](HANDOFF-r3-occluded512-cache-single-layer-20261029.md)。
+在 C 的完整 16 层 cache 上分别只替换 `down_0_0_0`（最早可观测层）和
+`up_2_2_0`（C/D NRMSE 最大层）为 D 值；两次均固定同一输入、完整 15 步、
+MLX fp16 resident generation，并通过 `consumer_exact`。
+
+- `down_0_0_0`：image 11 相对 C 最大 `15/255`，相对 D 最大 `38/255`；
+- `up_2_2_0`：image 11 相对 C 最大 `13/255`，相对 D 最大 `35/255`；
+- 两个单层都不能复现完整 C/D `42/255`，提示还需检查多层交互与轨迹放大。
+
+摘要 SHA256 `d87dd31abafda625f39cae33d87ab4ed635fd9043c3888ff68c9a0e75e8f522f`；
+证据归档 manifest（129 项）SHA256
+`06037adcb31686a2870c1ab73d11af6ee326c0228c5c0d84291982b80d64b094`。
+下一步优先做这两个层联合 swap 或按 block 分组 swap；默认路径保持不变。
