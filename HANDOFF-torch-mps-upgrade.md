@@ -611,3 +611,21 @@ CPU 合并报告 SHA256 `de883e3ebb78a476a912ca372feac1e6daa5d53b4627fd1a75335a6
 kernel 源码错误或最终像素的直接因果；`43/255` 探索性门槛仍失败，默认路径不切换。
 新增诊断参数 `--full-down0` 必须与 `--detailed-down0` 同用，旧默认行为保持。
 宿主 Metal 全量 unittest fresh 为 `88/88 OK`；受保护 dirty 文件保持不变。
+
+## 25. R3 MLX 0.32.4 Winograd source 与显式 opt-out（2026-10-29）
+
+阶段交接见 [`HANDOFF-r3-mlx0324-winograd-source-direct-off-20261029.md`](HANDOFF-r3-mlx0324-winograd-source-direct-off-20261029.md)。
+已推送的上一阶段提交是 `8830967`。本机官方 `ml-explore/mlx` 仓库的
+`v0.32.4` tag 对应 commit `36969c094354086e15d2a327a9c50feb20b9cf11`，
+`conv.cpp` 明确显示默认 Winograd 条件、`working_set=1` 的 zero-budget fallback
+以及 0.32.4 新增的 `MLX_CONV_WINOGRAD=0` 显式开关。当前候选 venv 的
+`mlx`/`mlx-metal` wheel 均为 0.32.4，`libmlx.dylib` 含相关 dispatch 字符串；
+wheel metadata 没有 VCS commit，不能声称 dylib 逐字节源自该 tag。
+
+空 ComfyUI queue 下的单次 frozen `conv1` GPU probe 证明显式
+`MLX_CONV_WINOGRAD=0` 输出与前一阶段 `working_set=1` capture 逐元素 exact；
+报告 SHA256 `47c0451bba3cedb4c8613967e18f6f5d8b7104909acf06d7ecc2c1dcdec488cd`。
+本阶段 source/binary 摘要 SHA256
+`689bf9cd9402abd4234f6ed62d364a45889cdafd3d5f5ad04e03dd7956d468e8`。
+默认路径不切换；下一阶段优先调查同 disabled policy 的 C/D reference 残余
+`42/255`，不能把 A/D 单卷积差直接当作最终像素的完整因果解释。
