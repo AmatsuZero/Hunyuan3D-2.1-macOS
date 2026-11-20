@@ -30,11 +30,14 @@ from diffusers.models.attention_processor import Attention, AttnProcessor
 # chunks to keep peak memory bounded and avoid unnecessary swapping.
 _original_sdpa = F.scaled_dot_product_attention
 
-# Absolute ceiling for any single SDPA buffer allocation
-_MAX_BUFFER_BYTES = 10_000_000_000  # 10GB
+# Absolute ceiling for any single SDPA buffer allocation.
+# MPS SDPA workspace is several times the theoretical QK matrix, and this
+# machine is already holding the PyTorch UNet plus the MLX copy, so a 1GB
+# floor still turns into a ~9GB allocation and trips the MPS watermark.
+_MAX_BUFFER_BYTES = 256_000_000  # 256MB theoretical
 
 # Target: keep total MPS usage under this fraction of recommended_max_memory
-_TARGET_MPS_FRACTION = 0.35
+_TARGET_MPS_FRACTION = 0.15
 
 
 def _get_chunk_budget():
@@ -44,7 +47,7 @@ def _get_chunk_budget():
         recommended = torch.mps.recommended_max_memory()
         headroom = max(0, int(recommended * _TARGET_MPS_FRACTION) - allocated)
         # Use at most _MAX_BUFFER_BYTES, but shrink if headroom is tight
-        return max(1_000_000_000, min(_MAX_BUFFER_BYTES, headroom))  # floor 1GB
+        return max(64_000_000, min(_MAX_BUFFER_BYTES, headroom))  # floor 64MB
     except Exception:
         return _MAX_BUFFER_BYTES
 
